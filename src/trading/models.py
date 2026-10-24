@@ -10,6 +10,25 @@ from typing import Optional
 from enum import Enum
 
 
+def build_signal_key(
+    *,
+    figi: str,
+    timeframe: str,
+    candle_open_time: datetime,
+    direction: str,
+) -> str:
+    """
+    Build a stable idempotency key for one trading signal.
+
+    One signal (instrument + timeframe + candle + direction) must produce at most
+    one live trade, even if the scheduler runs several times or restarts between
+    sending the order and recording it. Microseconds are dropped so that the key
+    survives serialization round-trips (database, logs).
+    """
+    candle = candle_open_time.replace(microsecond=0).isoformat()
+    return f"{figi}|{timeframe}|{candle}|{direction}"
+
+
 class TradeStatus(Enum):
     """Статус реальной сделки."""
     PENDING = "PENDING"           # Ожидает исполнения
@@ -48,6 +67,9 @@ class LiveTrade:
     
     # Направление
     direction: str = ""                         # "LONG" | "SHORT"
+
+    # Идемпотентность: один сигнал -> максимум одна сделка (unique index в БД)
+    signal_key: Optional[str] = None
     
     # Вход
     entry_time: Optional[datetime] = None

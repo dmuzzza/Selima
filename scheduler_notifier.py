@@ -41,7 +41,6 @@ from src.market_data.timeframe import Timeframe
 from src.brokers.broker_factory import BrokerFactory
 from src.trading.account_selector import AccountSelector
 from src.trading.orchestrator import TradingOrchestrator
-from src.trading.repository import LiveTradeRepository
 from src.strategies.dual_ma_crossover_after_testing import DualMACrossoverStrategy
 from config.trading_mode import resolve_trading_mode
 
@@ -49,7 +48,7 @@ from config.trading_mode import resolve_trading_mode
 # РЕЖИМ ТОРГОВЛИ (только через окружение, см. config/trading_mode.py)
 # ═══════════════════════════════════════════════════════════════════════════
 # dry_run — только сигналы и уведомления; live — реальные сделки (нужен LIVE_CONFIRM=yes).
-# Сделки пишутся в PostgreSQL (live_trades) через PostgresTradingOrchestrator.
+# Сделки пишутся в PostgreSQL (live_trades) через PgLiveTradeRepository.
 TRADING_MODE = resolve_trading_mode()
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -99,7 +98,7 @@ TRADING_TIMEFRAMES = ["4h"] #"1h", "4h", "1d"
 
 CONFIG_PATH = "config/instruments.json"
 DB_PATH = "marketdata.db"
-TRADES_DB_PATH = "data/live_trades.db"
+
 
 # VK API
 VK_API_URL = "https://api.vk.com/method/messages.send"
@@ -162,55 +161,13 @@ def is_weekend() -> bool:
     return now.weekday() >= 5
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 🐘 POSTGRES-РЕПОЗИТОРИЙ И ОРКЕСТРАТОР (сделки → PostgreSQL, не SQLite)
+# 🐘 POSTGRES-РЕПОЗИТОРИИ (сделки → PostgreSQL, не SQLite)
 # ═══════════════════════════════════════════════════════════════════════════
-# Используются ТОЛЬКО в scheduler_notifier, чтобы сделки открывались
-# и записывались в PostgreSQL (таблицы live_trades и stop_orders),
-# а не в SQLite (live_trades.db). Весь остальной код (scheduler.py и др.)
-# работает по-старому (через SQLite).
+# Единственное хранилище сделок и стоп-ордеров — PostgreSQL
+# (таблицы live_trades и stop_orders).
 
 from src.trading.pg_repository import PgLiveTradeRepository, PgStopOrderRepository
 
-
-class PostgresTradingOrchestrator(TradingOrchestrator):
-    """
-    TradingOrchestrator, который ОТКРЫВАЕТ сделки и пишет их в PostgreSQL.
-
-    Вместо LiveTradeRepository (SQLite) используется PgLiveTradeRepository.
-    Все остальное (расчёт позиции, исполнение ордера через API) — как в обычном
-    TradingOrchestrator.
-    """
-
-    def __init__(self, token: str, account_id: str, strategy_name: str, timeframe: str,
-                 repository: Optional[PgLiveTradeRepository] = None):
-        from src.brokers.position_manager import PositionManager
-        from src.brokers.trade_executor import TradeExecutor
-
-        self.token = token
-        self.account_id = account_id
-        self.strategy_name = strategy_name
-        self.timeframe = timeframe
-
-        self.position_manager = PositionManager(token, account_id)
-        self.trade_executor = TradeExecutor(token, account_id)
-        self.repository = repository or PgLiveTradeRepository(self._make_engine())
-
-        logger.info(
-            f"✓ Postgres-TradingOrchestrator initialized: "
-            f"strategy={strategy_name}, timeframe={timeframe}, account={account_id} "
-            f"(writes to PostgreSQL live_trades)"
-        )
-
-    @staticmethod
-    def _make_engine():
-        from sqlalchemy import create_engine
-
-        db_url = (
-            f"postgresql://{os.getenv('PG_USER')}:{os.getenv('PG_PASSWORD')}"
-            f"@{os.getenv('PG_HOST')}:5432/{os.getenv('PG_DBNAME')}"
-            f"?sslmode=require"
-        )
-        return create_engine(db_url, pool_pre_ping=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -615,7 +572,7 @@ class TradingNotifier:
         trades_count = 0
         if TRADING_MODE.is_live:
             try:
-                orchestrator = PostgresTradingOrchestrator(
+                orchestrator = TradingOrchestrator(
                     token=self.token,
                     account_id=account_id,
                     strategy_name=strategy.name,
@@ -773,7 +730,6 @@ class TradingNotifier:
 
                 collector = OrderCollector(
                     token=self.token,
-                    db_path=TRADES_DB_PATH,
                     trade_repo=pg_trade_repo,
                     order_repo=pg_order_repo,
                 )
@@ -808,7 +764,6 @@ class TradingNotifier:
 
             reconciler = TradingReconciler(
                 token=self.token,
-                trades_db_path=TRADES_DB_PATH,
                 timezone=MOSCOW_TZ,
                 log=logger,
                 trade_repo=pg_trade_repo,
@@ -994,7 +949,6 @@ class TradingNotifier:
 
             reconciler = TradingReconciler(
                 token=self.token,
-                trades_db_path=TRADES_DB_PATH,
                 timezone=MOSCOW_TZ,
                 log=logger,
                 trade_repo=pg_trade_repo,

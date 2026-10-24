@@ -120,11 +120,12 @@ p_selima_v8.1/
 │   │   └── trade_executor.py          маркет-ордер + TP (лимит) + SL (стоп-лимит)
 │   │
 │   ├── trading/                       [C]
-│   │   ├── models.py                  LiveTrade, TradeStatus, OrderType
-│   │   ├── repository.py              LiveTradeRepository (SQLite)
+│   │   ├── models.py                  LiveTrade, TradeStatus, OrderType, build_signal_key()
+│   │   ├── repository.py              LiveTradeRepository (SQLite, legacy)
 │   │   ├── stop_order_models.py       StopOrderRecord, StopOrderStatus
-│   │   ├── stop_order_repository.py   StopOrderRepository (SQLite)
-│   │   ├── pg_repository.py           PgLiveTradeRepository / PgStopOrderRepository (PostgreSQL)
+│   │   ├── stop_order_repository.py   StopOrderRepository (SQLite, legacy)
+│   │   ├── pg_repository.py           PgLiveTradeRepository / PgStopOrderRepository (PostgreSQL);
+│   │   │                              create_pending_if_absent() — идемпотентность по signal_key
 │   │   ├── orchestrator.py            TradingOrchestrator.process_signals()
 │   │   ├── account_selector.py        LONG/SHORT → account_id из env
 │   │   ├── order_collector.py         сбор ID стоп-ордеров после открытия
@@ -138,7 +139,9 @@ p_selima_v8.1/
 │       └── masking.py                 [C] mask_account_id() для логов
 │
 ├── tests/                             [C] pytest
-│   └── test_strategy_contract.py      контракт BaseStrategy: live-методы, паритет сигналов
+│   ├── test_strategy_contract.py      контракт BaseStrategy: live-методы, паритет сигналов
+│   ├── test_trading_mode.py           разбор TRADING_MODE / LIVE_CONFIRM
+│   └── test_signal_idempotency.py     signal_key: стабильность, повторный сигнал не создаёт сделку
 │
 ├── dashboard/                         [C] актуальный дашборд
 │   ├── app.py                         точка входа: Dash, init data layer
@@ -148,8 +151,8 @@ p_selima_v8.1/
 │   ├── callbacks.py                   регистрация Dash-callback'ов
 │   └── ui/{components,chart_builder,layout}.py   компоненты, графики (881 строка), layout
 │
-├── migrations/                        [T] ручные миграции SQLite (add_hash, lot_size, position_id,
-│                                          stop_orders, constraint)
+├── migrations/                        [T] ручные миграции (SQLite: add_hash, lot_size, position_id,
+│                                          stop_orders, constraint; PostgreSQL: add_signal_key)
 ├── scripts/                           [T] экспорт сделок/свечей, отчёт, top10 по объёму,
 │                                          таблица FIGI, проверка constraint
 ├── optimization/                      [T] grid_tp_sl_dual_ma.py, optimize_macd_plus.py,
@@ -216,8 +219,10 @@ flowchart TD
     HM --> API
 ```
 
-По умолчанию scheduler пишет сделки в SQLite (`TRADES_DB_PATH = "data/live_trades.db"`),
-репозитории PostgreSQL (`pg_repository.py`) используются в `scheduler_notifier.py`.
+По умолчанию и `scheduler.py`, и `scheduler_notifier.py` пишут сделки и стоп-ордера в
+PostgreSQL (`PgLiveTradeRepository` / `PgStopOrderRepository`). SQLite-репозитории
+(`repository.py`, `stop_order_repository.py`) остались только для legacy-скриптов и
+локальных проверок.
 
 ### Ключевые зависимости
 
@@ -331,13 +336,34 @@ sequenceDiagram
 `UNIQUE (figi, timeframe, open_time)`. Схема создаётся не приложением, а вручную
 (`Base.metadata.create_all` закомментирован).
 
-### SQLite (сделки)
+### PostgreSQL (сделки и стоп-ордера)
+
+Основное хранилище для `live_trades` и `stop_orders`: `PgLiveTradeRepository` /
+`PgStopOrderRepository` (`src/trading/pg_repository.py`).
+
+Идемпотентность live-сигналов (ADR-010):
+
+| Объект | Назначение |
+|---|---|
+| `live_trades.signal_key` | `figi\|timeframe\|candle_open_time\|direction`; NULL у старых записей |
+| `uq_live_trades_signal_key` | частичный уникальный индекс `WHERE signal_key IS NOT NULL` |
+
+`create_pending_if_absent()` выполняет `INSERT ... ON CONFLICT (signal_key) WHERE
+signal_key IS NOT NULL DO NOTHING` **до** отправки ордера. `rowcount = 0` означает, что
+сигнал уже обработан (в этом или предыдущем запуске процесса) — ордер не отправляется.
+Индекс и колонка создаются идемпотентно в `__init__` репозитория и отдельным скриптом
+`migrations/migrate_add_signal_key.py`.
+
+### SQLite (сделки, legacy)
+
+Не используется production-кодом (`scheduler.py`, `scheduler_notifier.py` работают через
+PostgreSQL). Оставлен для legacy-скриптов и локальных проверок.
 
 `live_trades` — `trade_id` (PK, текст), `position_id`, `strategy_name`, `timeframe`,
-`ticker`, `figi`, `direction`, `entry_time/price`, `lots`, `lot_size`, `position_size`,
-`exit_time/price/type`, `pnl_abs/percent`, `tp_price/sl_price`, `tp_percent/sl_percent`,
-`status` (PENDING/OPEN/CLOSED/FAILED/CANCELLED), `account_id` (Fernet),
-`account_id_hash`, `orders_collected`, `error_message`, `metadata` (JSON).
+`ticker`, `figi`, `direction`, `signal_key` (только PG), `entry_time/price`, `lots`,
+`lot_size`, `position_size`, `exit_time/price/type`, `pnl_abs/percent`, `tp_price/sl_price`,
+`tp_percent/sl_percent`, `status` (PENDING/OPEN/CLOSED/FAILED/CANCELLED), `account_id`
+(Fernet), `account_id_hash`, `orders_collected`, `error_message`, `metadata` (JSON).
 
 `stop_orders` — `stop_order_id`, `position_id`, `trade_id`, `order_type` (TP/SL),
 `stop_price`, `status` (ACTIVE/EXECUTED/CANCELLED/EXPIRED), `metadata` (JSON).
@@ -349,7 +375,8 @@ sequenceDiagram
 
 - `src/storage/models.py` описывает таблицу `marketdata` (без `figi`, `time` вместо
   `open_time`) — **не используется**, конфликтует с реальной схемой.
-- `pg_repository.py` дублирует SQLite-репозитории «один-в-один» по интерфейсу.
+- `pg_repository.py` дублирует SQLite-репозитории «один-в-один» по интерфейсу;
+  SQLite-версии выведены из production-пути, но ещё не удалены (T2-4).
 
 ---
 

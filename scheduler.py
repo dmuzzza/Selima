@@ -98,7 +98,6 @@ TRADING_TIMEFRAMES = ["1h", "4h", "1d"]
 # Конфигурация
 CONFIG_PATH = "config/instruments.json"
 DB_PATH = "marketdata.db"
-TRADES_DB_PATH = "data/live_trades.db"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # СИСТЕМА ПРИОРИТЕТОВ ЗАДАЧ
@@ -253,6 +252,10 @@ class TradingScheduler:
             config_path=CONFIG_PATH
         )
         self.account_selector = AccountSelector()
+
+        # PostgreSQL-репозитории сделок (создаются лениво, один раз за процесс)
+        self._trade_repo = None
+        self._order_repo = None
         
         # Планировщик APScheduler
         self.scheduler = BlockingScheduler(timezone=MOSCOW_TZ)
@@ -412,6 +415,21 @@ class TradingScheduler:
             traceback.print_exc()
             self.stats["errors"] += 1
     
+    def _trade_repositories(self):
+        """
+        Репозитории сделок и стоп-ордеров в PostgreSQL.
+
+        SQLite больше не используется в production-пути: данные сделок живут
+        в той же БД, что и рыночные данные.
+        """
+        from src.trading.pg_repository import PgLiveTradeRepository, PgStopOrderRepository
+
+        if self._trade_repo is None:
+            engine = self.history_manager.engine
+            self._trade_repo = PgLiveTradeRepository(engine)
+            self._order_repo = PgStopOrderRepository(engine)
+        return self._trade_repo, self._order_repo
+
     def _process_instrument(
         self,
         instrument,
@@ -518,12 +536,10 @@ class TradingScheduler:
         logger.info(f"  🔔 Signal: {signal.signal_type}")
 
 
-        from src.trading.repository import LiveTradeRepository
-
         # direction для дубль-чека = сторона сделки
         direction = "LONG" if signal.signal_type == "BULLISH" else "SHORT"
 
-        trade_repo = LiveTradeRepository(TRADES_DB_PATH)
+        trade_repo, _order_repo = self._trade_repositories()
         all_accounts = self.account_selector.get_all_accounts()
 
         if trade_repo.has_open_trade_on_timeframe_accounts(
@@ -559,7 +575,7 @@ class TradingScheduler:
             account_id=account_id,
             strategy_name=strategy.name,
             timeframe=timeframe,
-            db_path=TRADES_DB_PATH
+            repository=trade_repo,
         )
         
         # Выполняем торговлю
@@ -599,8 +615,13 @@ class TradingScheduler:
                 logger.info("─"*60)
                 
                 from src.trading.order_collector import OrderCollector
-                
-                collector = OrderCollector(token=self.token, db_path=TRADES_DB_PATH)
+
+                trade_repo, order_repo = self._trade_repositories()
+                collector = OrderCollector(
+                    token=self.token,
+                    trade_repo=trade_repo,
+                    order_repo=order_repo,
+                )
                 stats = collector.collect_pending_orders(wait_seconds=0)
                 
                 if stats["collected"] > 0:
@@ -631,11 +652,13 @@ class TradingScheduler:
         try:
             from src.trading.reconciler import TradingReconciler
 
+            trade_repo, order_repo = self._trade_repositories()
             reconciler = TradingReconciler(
                 token=self.token,
-                trades_db_path=TRADES_DB_PATH,
                 timezone=MOSCOW_TZ,
                 log=logger,
+                trade_repo=trade_repo,
+                order_repo=order_repo,
             )
 
             stats = reconciler.reconcile(skip_weekends=True, is_weekend_fn=is_weekend)
@@ -792,11 +815,13 @@ class TradingScheduler:
         logger.info("🔄 STARTUP: Running initial reconciliation...")
         try:
             from src.trading.reconciler import TradingReconciler
+            trade_repo, order_repo = self._trade_repositories()
             reconciler = TradingReconciler(
                 token=self.token,
-                trades_db_path=TRADES_DB_PATH,
                 timezone=MOSCOW_TZ,
                 log=logger,
+                trade_repo=trade_repo,
+                order_repo=order_repo,
             )
             stats = reconciler.reconcile(skip_weekends=False)  # ← skip_weekends=False: всегда выполнять при старте
             logger.info(

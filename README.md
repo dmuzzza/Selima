@@ -13,8 +13,8 @@
 Что ещё не сделано:
 
 - нет git-репозитория и CI, нет `Dockerfile` / `docker-compose.yml` (T5-2, T5-3, T5-4, T5-6);
-- не закрыты P0-риски реальной торговли: единый движок бэктеста (T2-1), идемпотентность
-  сигналов (T2-5), защита от двойного открытия при рестарте (T2-6), walk-forward (T2-8);
+- не закрыты P0-риски реальной торговли: единый движок бэктеста (T2-1),
+  walk-forward вместо подбора TP/SL на всей истории (T2-8);
 - legacy-мусор в структуре: `src/sma_crossover/`, `app_dashboard.py`, одноразовые скрипты
   в корне (T1-2, T1-3).
 
@@ -39,7 +39,7 @@
 
 - Python 3.12 (зафиксировано в `pyproject.toml`: `>=3.12,<3.13`)
 - T-Invest SDK (`t_tech.invest`, версия 1.51.0 — вендорный wheel в `vendor/`)
-- PostgreSQL — рыночные данные, опционально сделки; SQLite — сделки по умолчанию
+- PostgreSQL — единственное хранилище: рыночные данные, сделки, стоп-ордера
 - SQLAlchemy, Dash + Plotly, APScheduler
 - `cryptography` (Fernet) для шифрования `account_id`
 - Управление зависимостями: `uv` (`pyproject.toml` + `uv.lock`)
@@ -89,7 +89,7 @@ p_selima_v8.1/
 ├── dashboard/               # актуальный дашборд (пакет)
 ├── config/                  # instruments.json, комиссии, лимиты
 ├── src/                     # ядро: brokers, market_data, strategies, trading, ...
-├── migrations/              # ручные SQL-миграции SQLite
+├── migrations/              # ручные миграции (SQLite legacy + PostgreSQL signal_key)
 ├── scripts/                 # одноразовые утилиты и экспорт
 ├── optimization/            # подбор параметров, ТЗ на ML-оптимизацию
 ├── archive/, debug/         # архив и отладочные скрипты
@@ -124,6 +124,7 @@ p_selima_v8.1/
 | Автоторговля | `uv run python scheduler.py` |
 | Только сигналы + VK | `uv run python scheduler_notifier.py` |
 | Загрузка истории | `uv run python reload_data_v2.py` |
+| Миграция БД (signal_key) | `uv run python migrations/migrate_add_signal_key.py` |
 | Тесты | `uv run pytest` |
 | Линтер / типы | `uv run ruff check .` / `uv run mypy src` |
 
@@ -145,5 +146,9 @@ p_selima_v8.1/
 - **Режим торговли задаётся только окружением.** По умолчанию `TRADING_MODE=dry_run`:
   сигналы находятся и логируются, но ордера не отправляются. Для реальных сделок нужны
   одновременно `TRADING_MODE=live` и `LIVE_CONFIRM=yes`; иначе процесс не стартует.
+- **Один сигнал — максимум одна сделка.** Ключ `figi|timeframe|candle_open_time|direction`
+  (`live_trades.signal_key`) блокирует повторный вход по той же закрытой свече, в том
+  числе после рестарта процесса. Для существующей БД примените миграцию:
+  `uv run python migrations/migrate_add_signal_key.py`.
 - `TEST_MODE=true` генерирует фиктивные сигналы вместо рыночных.
 - `account_id` в логах маскируется (`***1234`); ключ шифрования не логируется.

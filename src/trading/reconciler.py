@@ -44,7 +44,7 @@ class TradingReconciler:
     def __init__(
         self,
         token: str,
-        trades_db_path: str,
+        trades_db_path: str = "",
         *,
         timezone=None,
         log: Optional[logging.Logger] = None,

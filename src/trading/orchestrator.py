@@ -19,7 +19,7 @@ from src.brokers.position_manager import PositionManager
 from src.brokers.trade_executor import TradeExecutor
 from src.utils.masking import mask_account_id
 
-from .models import LiveTrade, TradeStatus
+from .models import LiveTrade, TradeStatus, build_signal_key
 from .repository import LiveTradeRepository
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,8 @@ class TradingOrchestrator:
         account_id: str,
         strategy_name: str,
         timeframe: str,  # ← НОВЫЙ ПАРАМЕТР
-        db_path: str = "data/live_trades.db"
+        db_path: str = "data/live_trades.db",
+        repository=None,
     ):
         """
         Инициализация координатора.
@@ -48,7 +49,8 @@ class TradingOrchestrator:
             account_id: ID счёта для торговли
             strategy_name: Название стратегии (для логирования)
             timeframe: Таймфрейм стратегии ("1h", "4h", "1d")
-            db_path: Путь к БД сделок
+            db_path: Путь к БД сделок (используется, если не передан repository)
+            repository: Готовый репозиторий сделок (например PgLiveTradeRepository)
         """
         self.token = token
         self.account_id = account_id
@@ -58,7 +60,7 @@ class TradingOrchestrator:
         # Компоненты
         self.position_manager = PositionManager(token, account_id)
         self.trade_executor = TradeExecutor(token, account_id)
-        self.repository = LiveTradeRepository(db_path)
+        self.repository = repository or LiveTradeRepository(db_path)
         
         logger.info(
             f"✓ TradingOrchestrator initialized: "
@@ -202,10 +204,17 @@ class TradingOrchestrator:
 
         # ═══════════════════════════════════════════════════════════
         # 1. СОЗДАЁМ ЗАПИСЬ В БД (статус PENDING)
+        #    signal_key защищает от повторной обработки того же сигнала
         # ═══════════════════════════════════════════════════════════
         trade_id = f"{ticker}_{signal.signal_type}_{uuid.uuid4().hex[:8]}"
         direction = "LONG" if signal.signal_type == "BULLISH" else "SHORT"
-        
+        signal_key = build_signal_key(
+            figi=figi,
+            timeframe=self.timeframe,
+            candle_open_time=signal.timestamp,
+            direction=direction,
+        )
+
         live_trade = LiveTrade(
             trade_id=trade_id,
             strategy_name=self.strategy_name,
@@ -214,15 +223,22 @@ class TradingOrchestrator:
             ticker=ticker,
             figi=figi,
             direction=direction,
+            signal_key=signal_key,
             tp_percent=tp_percent,
             sl_percent=sl_percent,
             status=TradeStatus.PENDING,
             account_id=self.account_id,
             metadata={"signal": signal.metadata or {}}
         )
-        
-        self.repository.save(live_trade)
-        logger.info(f"📝 Trade record created: {trade_id} (PENDING)")
+
+        create_pending = getattr(self.repository, "create_pending_if_absent", None)
+        if create_pending is not None:
+            if not create_pending(live_trade):
+                logger.warning(f"🚫 Signal already processed, skipping: {signal_key}")
+                return None
+        else:
+            self.repository.save(live_trade)
+            logger.info(f"📝 Trade record created: {trade_id} (PENDING)")
         
         # ═══════════════════════════════════════════════════════════
         # 2. РАССЧИТЫВАЕМ ПАРАМЕТРЫ ПОЗИЦИИ
@@ -239,6 +255,9 @@ class TradingOrchestrator:
         if not trade_params:
             live_trade.status = TradeStatus.FAILED
             live_trade.error_message = "Cannot calculate trade parameters (limits exceeded)"
+            # Ордер не отправлялся — освобождаем ключ, чтобы сигнал можно было
+            # обработать повторно на следующем цикле.
+            live_trade.signal_key = None
             self.repository.save(live_trade)
             return live_trade
         

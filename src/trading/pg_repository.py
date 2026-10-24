@@ -37,6 +37,31 @@ def _get_engine():
     return create_engine(db_url, pool_pre_ping=True)
 
 
+# Общий список колонок для INSERT: используется и в upsert (save), и в
+# идемпотентной вставке (create_pending_if_absent).
+_INSERT_COLUMNS = """
+    trade_id, position_id, strategy_name, timeframe, timestamp,
+    ticker, figi, direction, signal_key,
+    entry_time, entry_price, lots, lot_size, position_size,
+    exit_time, exit_price, exit_type,
+    pnl_abs, pnl_percent,
+    tp_price, sl_price, tp_percent, sl_percent,
+    status, account_id, account_id_hash, account_id_short, orders_collected,
+    error_message, broker, metadata
+"""
+
+_INSERT_VALUES = """
+    :trade_id, :position_id, :strategy_name, :timeframe, :timestamp,
+    :ticker, :figi, :direction, :signal_key,
+    :entry_time, :entry_price, :lots, :lot_size, :position_size,
+    :exit_time, :exit_price, :exit_type,
+    :pnl_abs, :pnl_percent,
+    :tp_price, :sl_price, :tp_percent, :sl_percent,
+    :status, :account_id, :account_id_hash, :account_id_short, :orders_collected,
+    :error_message, :broker, CAST(:metadata AS jsonb)
+"""
+
+
 class PgLiveTradeRepository:
     """
     Репозиторий сделок в PostgreSQL (таблица live_trades).
@@ -48,45 +73,77 @@ class PgLiveTradeRepository:
     def __init__(self, engine=None):
         self.engine = engine or _get_engine()
 
-        # Уникальный индекс по trade_id нужен для ON CONFLICT (upsert)
-        with self.engine.begin() as conn:
-            conn.execute(text(
-                "CREATE UNIQUE INDEX IF NOT EXISTS uq_live_trades_trade_id "
-                "ON live_trades(trade_id)"
-            ))
+        # DDL выполняется один раз на engine: репозиторий создаётся в каждом
+        # цикле планировщика, повторный ALTER/CREATE INDEX не нужен.
+        if not getattr(self.engine, "_live_trades_schema_ready", False):
+            with self.engine.begin() as conn:
+                # Уникальный индекс по trade_id нужен для ON CONFLICT (upsert)
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_live_trades_trade_id "
+                    "ON live_trades(trade_id)"
+                ))
+                # Идемпотентность сигналов: один signal_key -> максимум одна сделка.
+                # Частичный индекс: старые записи без ключа (NULL) не конфликтуют.
+                conn.execute(text(
+                    "ALTER TABLE live_trades ADD COLUMN IF NOT EXISTS signal_key TEXT"
+                ))
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_live_trades_signal_key "
+                    "ON live_trades(signal_key) WHERE signal_key IS NOT NULL"
+                ))
+            setattr(self.engine, "_live_trades_schema_ready", True)
 
     # ─────────────────────────── Запись ───────────────────────────
+
+    def _insert_params(self, trade: LiveTrade) -> dict:
+        """Параметры bind для INSERT в live_trades (account_id шифруется)."""
+        from src.utils.crypto import get_crypto
+
+        crypto = get_crypto()
+
+        return {
+            "trade_id": trade.trade_id,
+            "position_id": trade.position_id,
+            "strategy_name": trade.strategy_name,
+            "timeframe": trade.timeframe,
+            "timestamp": trade.timestamp or datetime.now(),
+            "ticker": trade.ticker,
+            "figi": trade.figi,
+            "direction": trade.direction,
+            "signal_key": trade.signal_key,
+            "entry_time": trade.entry_time,
+            "entry_price": trade.entry_price,
+            "lots": trade.lots,
+            "lot_size": trade.lot_size or 1,
+            "position_size": trade.position_size,
+            "exit_time": trade.exit_time,
+            "exit_price": trade.exit_price,
+            "exit_type": trade.exit_type,
+            "pnl_abs": trade.pnl_abs,
+            "pnl_percent": trade.pnl_percent,
+            "tp_price": trade.tp_price,
+            "sl_price": trade.sl_price,
+            "tp_percent": trade.tp_percent,
+            "sl_percent": trade.sl_percent,
+            "status": trade.status.value,
+            "account_id": crypto.encrypt(trade.account_id),
+            "account_id_hash": crypto.hash_account_id(trade.account_id),
+            "account_id_short": trade.account_id_short,
+            "orders_collected": 1 if trade.orders_collected else 0,
+            "error_message": trade.error_message,
+            "broker": trade.broker,
+            "metadata": json.dumps(trade.metadata, ensure_ascii=False) if trade.metadata else "{}",
+        }
 
     def save(self, trade: LiveTrade) -> bool:
         """Сохранить или обновить сделку (upsert по trade_id)."""
         try:
-            from src.utils.crypto import get_crypto
-            crypto = get_crypto()
-
-            encrypted_account_id = crypto.encrypt(trade.account_id)
-            account_id_hash = crypto.hash_account_id(trade.account_id)
+            params = self._insert_params(trade)
 
             with self.engine.begin() as conn:
-                conn.execute(text("""
-                    INSERT INTO live_trades (
-                        trade_id, position_id, strategy_name, timeframe, timestamp,
-                        ticker, figi, direction,
-                        entry_time, entry_price, lots, lot_size, position_size,
-                        exit_time, exit_price, exit_type,
-                        pnl_abs, pnl_percent,
-                        tp_price, sl_price, tp_percent, sl_percent,
-                        status, account_id, account_id_hash, account_id_short, orders_collected,
-                        error_message, broker, metadata
-                    ) VALUES (
-                        :trade_id, :position_id, :strategy_name, :timeframe, :timestamp,
-                        :ticker, :figi, :direction,
-                        :entry_time, :entry_price, :lots, :lot_size, :position_size,
-                        :exit_time, :exit_price, :exit_type,
-                        :pnl_abs, :pnl_percent,
-                        :tp_price, :sl_price, :tp_percent, :sl_percent,
-                        :status, :account_id, :account_id_hash, :account_id_short, :orders_collected,
-                        :error_message, :broker, CAST(:metadata AS jsonb)
-                    )
+                conn.execute(text(f"""
+                    INSERT INTO live_trades ({_INSERT_COLUMNS})
+                    VALUES ({_INSERT_VALUES})
                     ON CONFLICT (trade_id) DO UPDATE SET
                         position_id       = EXCLUDED.position_id,
                         strategy_name     = EXCLUDED.strategy_name,
@@ -95,6 +152,7 @@ class PgLiveTradeRepository:
                         ticker            = EXCLUDED.ticker,
                         figi              = EXCLUDED.figi,
                         direction         = EXCLUDED.direction,
+                        signal_key        = EXCLUDED.signal_key,
                         entry_time        = EXCLUDED.entry_time,
                         entry_price       = EXCLUDED.entry_price,
                         lots              = EXCLUDED.lots,
@@ -117,44 +175,44 @@ class PgLiveTradeRepository:
                         error_message     = EXCLUDED.error_message,
                         broker            = EXCLUDED.broker,
                         metadata          = EXCLUDED.metadata
-                """), {
-                    "trade_id": trade.trade_id,
-                    "position_id": trade.position_id,
-                    "strategy_name": trade.strategy_name,
-                    "timeframe": trade.timeframe,
-                    "timestamp": trade.timestamp or datetime.now(),
-                    "ticker": trade.ticker,
-                    "figi": trade.figi,
-                    "direction": trade.direction,
-                    "entry_time": trade.entry_time,
-                    "entry_price": trade.entry_price,
-                    "lots": trade.lots,
-                    "lot_size": trade.lot_size or 1,
-                    "position_size": trade.position_size,
-                    "exit_time": trade.exit_time,
-                    "exit_price": trade.exit_price,
-                    "exit_type": trade.exit_type,
-                    "pnl_abs": trade.pnl_abs,
-                    "pnl_percent": trade.pnl_percent,
-                    "tp_price": trade.tp_price,
-                    "sl_price": trade.sl_price,
-                    "tp_percent": trade.tp_percent,
-                    "sl_percent": trade.sl_percent,
-                    "status": trade.status.value,
-                    "account_id": encrypted_account_id,
-                    "account_id_hash": account_id_hash,
-                    "account_id_short": trade.account_id_short,
-                    "orders_collected": 1 if trade.orders_collected else 0,
-                    "error_message": trade.error_message,
-                    "broker": trade.broker,
-                    "metadata": json.dumps(trade.metadata, ensure_ascii=False) if trade.metadata else "{}",
-                })
+                """), params)
             logger.debug(f"✓ Trade saved to PostgreSQL: {trade.trade_id}")
             return True
 
         except Exception as e:
             logger.error(f"✗ Failed to save trade {trade.trade_id} to PostgreSQL: {e}")
             return False
+
+    def create_pending_if_absent(self, trade: LiveTrade) -> bool:
+        """
+        Атомарно вставить PENDING-сделку, если её signal_key ещё не занят.
+
+        Возвращает True, если запись создана, и False, если сигнал уже обработан
+        (в том числе параллельным процессом или до рестарта).
+        """
+        if not trade.signal_key:
+            raise ValueError("create_pending_if_absent requires trade.signal_key")
+
+        try:
+            params = self._insert_params(trade)
+
+            with self.engine.begin() as conn:
+                result = conn.execute(text(f"""
+                    INSERT INTO live_trades ({_INSERT_COLUMNS})
+                    VALUES ({_INSERT_VALUES})
+                    ON CONFLICT (signal_key) WHERE signal_key IS NOT NULL DO NOTHING
+                """), params)
+                inserted = result.rowcount == 1
+
+            if inserted:
+                logger.info(f"📝 Trade record created: {trade.trade_id} (PENDING)")
+            else:
+                logger.warning(f"🚫 DUPLICATE SIGNAL PREVENTED: {trade.signal_key}")
+            return inserted
+
+        except Exception as e:
+            logger.error(f"✗ Failed to insert pending trade {trade.trade_id}: {e}")
+            raise
 
     # ─────────────────────────── Чтение ───────────────────────────
 
@@ -320,6 +378,7 @@ class PgLiveTradeRepository:
             ticker=row["ticker"],
             figi=row["figi"],
             direction=row["direction"],
+            signal_key=row.get("signal_key"),
             entry_time=row["entry_time"],
             entry_price=row["entry_price"],
             lots=row["lots"],
