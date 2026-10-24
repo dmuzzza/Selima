@@ -105,6 +105,13 @@
 - Добавлены отсутствующие `__init__.py`: `src/`, `src/strategies/`, `src/backtest/`,
   `src/storage/` — пакеты больше не полагаются на namespace-импорт.
 
+### Removed
+
+- Из PostgreSQL удалены 28 устаревших записей `live_trades` (17 `OPEN`, 11 `FAILED`),
+  зашифрованных утраченным `ACCOUNT_ENCRYPTION_KEY`; сделки на бирже были закрыты.
+  Бэкап перед удалением — `live_trades_backup.csv` (локально, в `.gitignore`).
+  Таблица `stop_orders` на момент удаления была пуста.
+
 ### Known issues
 
 Зафиксированы, не исправлены (см. `docs/TASKS.md`):
