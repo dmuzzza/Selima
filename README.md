@@ -112,7 +112,7 @@ p_selima_v8.1/
 | `PG_HOST`, `PG_USER`, `PG_PASSWORD`, `PG_DBNAME` | подключение к PostgreSQL с рыночными данными | да |
 | `ACCOUNT_ID_DUAL_MA_LONG` | счёт для LONG-сделок | да |
 | `ACCOUNT_ID_DUAL_MA_SHORT` | счёт для SHORT-сделок | да |
-| `ACCOUNT_ENCRYPTION_KEY` | ключ Fernet для шифрования `account_id` в БД | да |
+| `ACCOUNT_ENCRYPTION_KEY` | ключ Fernet для шифрования `account_id` в БД. Должен совпадать с ключом, которым зашифрованы существующие записи | да |
 | `VK_TOKEN`, `VK_CHAT_ID` | уведомления (`scheduler_notifier.py`) | нет |
 
 ## Запуск локально

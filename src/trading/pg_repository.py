@@ -30,7 +30,7 @@ def _get_engine():
     from sqlalchemy import create_engine
 
     db_url = (
-        f"postgresql://{os.getenv('PG_USER')}:{os.getenv('PG_PASSWORD')}"
+        f"postgresql+psycopg2://{os.getenv('PG_USER')}:{os.getenv('PG_PASSWORD')}"
         f"@{os.getenv('PG_HOST')}:5432/{os.getenv('PG_DBNAME')}"
         f"?sslmode=require"
     )
@@ -76,6 +76,31 @@ class PgLiveTradeRepository:
         # DDL выполняется один раз на engine: репозиторий создаётся в каждом
         # цикле планировщика, повторный ALTER/CREATE INDEX не нужен.
         if not getattr(self.engine, "_live_trades_schema_ready", False):
+            self._ensure_schema()
+            setattr(self.engine, "_live_trades_schema_ready", True)
+
+    def _ensure_schema(self) -> None:
+        """
+        Проверить наличие signal_key и уникальных индексов.
+
+        Проверка идёт через системные каталоги и не требует прав владельца
+        таблицы. DDL выполняется только если объект отсутствует — на рабочей
+        БД его применяют заранее (migrations/migrate_add_signal_key.py).
+        """
+        with self.engine.connect() as conn:
+            has_column = conn.execute(text("""
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'live_trades' AND column_name = 'signal_key'
+            """)).first() is not None
+            has_signal_index = conn.execute(text("""
+                SELECT 1 FROM pg_indexes
+                WHERE tablename = 'live_trades' AND indexname = 'uq_live_trades_signal_key'
+            """)).first() is not None
+
+        if has_column and has_signal_index:
+            return
+
+        try:
             with self.engine.begin() as conn:
                 # Уникальный индекс по trade_id нужен для ON CONFLICT (upsert)
                 conn.execute(text(
@@ -91,7 +116,12 @@ class PgLiveTradeRepository:
                     "CREATE UNIQUE INDEX IF NOT EXISTS uq_live_trades_signal_key "
                     "ON live_trades(signal_key) WHERE signal_key IS NOT NULL"
                 ))
-            setattr(self.engine, "_live_trades_schema_ready", True)
+        except Exception as exc:  # noqa: BLE001 - wrap with actionable message
+            raise RuntimeError(
+                "live_trades.signal_key is missing and the database user cannot "
+                "alter the table (owner privileges required). Run as the table "
+                "owner: python migrations/migrate_add_signal_key.py"
+            ) from exc
 
     # ─────────────────────────── Запись ───────────────────────────
 

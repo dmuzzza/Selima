@@ -46,6 +46,17 @@
 
 ### Fixed
 
+- Подключение к PostgreSQL: SQLAlchemy 2.1 по умолчанию использует драйвер `psycopg`
+  (v3), которого нет в зависимостях; установлен `psycopg2-binary`. URL теперь явно
+  задаёт драйвер: `postgresql+psycopg2://` (`history_manager.py`, `pg_repository.py`,
+  `migrations/migrate_add_signal_key.py`). До исправления любой доступ к БД падал с
+  `ModuleNotFoundError: No module named 'psycopg'`.
+- `PgLiveTradeRepository.__init__` больше не выполняет DDL при каждом старте: наличие
+  `signal_key` и индекса проверяется через системные каталоги, `ALTER TABLE` вызывается
+  только если объект отсутствует. На рабочей БД роль приложения (`user_lens`) не владелец
+  таблиц, поэтому безусловный `ALTER` ломал запуск (`must be owner of table live_trades`).
+- `migrations/migrate_add_signal_key.py`: читает `.env`, проверяет обязательные `PG_*`
+  и вырезает пароль из текста ошибки перед логированием.
 - Повторный вход по одному и тому же сигналу: если позиция закрывалась по TP/SL,
   планировщик мог открыть её снова на той же закрытой свече. Теперь `signal_key`
   блокирует повторную обработку (T2-5).

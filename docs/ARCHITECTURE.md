@@ -351,8 +351,14 @@ sequenceDiagram
 `create_pending_if_absent()` выполняет `INSERT ... ON CONFLICT (signal_key) WHERE
 signal_key IS NOT NULL DO NOTHING` **до** отправки ордера. `rowcount = 0` означает, что
 сигнал уже обработан (в этом или предыдущем запуске процесса) — ордер не отправляется.
-Индекс и колонка создаются идемпотентно в `__init__` репозитория и отдельным скриптом
-`migrations/migrate_add_signal_key.py`.
+
+Схема: `_ensure_schema()` проверяет наличие колонки и индекса через `information_schema` /
+`pg_indexes` (прав владельца не требует) и вызывает DDL только если объект отсутствует.
+На рабочей БД владелец таблиц — отдельная роль, поэтому изменение схемы выполняется
+заранее: `migrations/migrate_add_signal_key.py` под владельцем.
+
+Подключение: драйвер задаётся явно — `postgresql+psycopg2://` (SQLAlchemy 2.1 по
+умолчанию выбирает `psycopg` v3, который не установлен).
 
 ### SQLite (сделки, legacy)
 

@@ -32,18 +32,30 @@ def build_url() -> str:
         raise RuntimeError(f"Missing environment variables: {', '.join(missing)}")
 
     return (
-        f"postgresql://{os.getenv('PG_USER')}:{os.getenv('PG_PASSWORD')}"
+        f"postgresql+psycopg2://{os.getenv('PG_USER')}:{os.getenv('PG_PASSWORD')}"
         f"@{os.getenv('PG_HOST')}:5432/{os.getenv('PG_DBNAME')}?sslmode=require"
     )
+
+
+def redact(message: str) -> str:
+    """Remove the database password from an error message before logging."""
+    password = os.getenv("PG_PASSWORD")
+    if password and password in message:
+        return message.replace(password, "***")
+    return message
 
 
 def main() -> None:
     load_dotenv()
     engine = create_engine(build_url(), pool_pre_ping=True)
-    with engine.begin() as conn:
-        for statement in STATEMENTS:
-            conn.execute(text(statement))
-            log.info("applied: %s", statement)
+    try:
+        with engine.begin() as conn:
+            for statement in STATEMENTS:
+                conn.execute(text(statement))
+                log.info("applied: %s", statement)
+    except Exception as exc:  # noqa: BLE001 - report and fail loudly
+        log.error("migration failed: %s: %s", type(exc).__name__, redact(str(exc)))
+        raise SystemExit(1) from None
     log.info("migration complete")
 
 
