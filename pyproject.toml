@@ -1,0 +1,65 @@
+[project]
+name = "p-selima"
+version = "0.8.1"
+description = "Automated trading system for T-Invest API: market data, backtesting, live trading, dashboard"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # T-Invest SDK. opensource.tbank.ru is temporarily down, upstream wheel lives on GitHub.
+    # Local copy is used because uv cannot validate raw.githubusercontent.com's
+    # Let's Encrypt YR1 chain on this machine (TLS: invalid peer certificate).
+    # Switch back to "t-tech-investments>=1.51" when the official index is restored.
+    "t-tech-investments",
+    "sqlalchemy>=2.0,<3",
+    "psycopg2-binary>=2.9,<3",
+    "python-dotenv>=1.0,<2",
+    "pytz>=2024.1",
+    "apscheduler>=3.10,<4",
+    "dash>=2.16,<3",
+    "plotly>=5.20,<6",
+    "pandas>=2.2,<3",
+    "numpy>=1.26,<3",
+    "cryptography>=42",
+    "certifi>=2024.2.2",
+]
+
+[project.optional-dependencies]
+# Optimization scripts only (optimization/): not needed for trading runtime.
+optimization = [
+    "tqdm>=4.66,<5",
+    "optuna>=3.6,<5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<9",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[tool.uv]
+# Application, not a distributable library: no build backend, no wheel.
+package = false
+
+[tool.uv.sources]
+# Vendored SDK wheel, see comment in [project].dependencies.
+t-tech-investments = { path = "vendor/t_tech_investments-1.51.0-py3-none-any.whl" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["archive", "debug"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = true
+exclude = ["archive/", "debug/", "scripts/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -1,0 +1,50 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+credentials*
+secrets*
+*.tfvars
+kubeconfig
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.ipynb_checkpoints/
+build/
+dist/
+
+# Data & artifacts
+*.db
+*.db-journal
+*.sqlite3
+*.csv
+*.xlsx
+*.log
+*.parquet
+*.orig
+*.rej
+logs/
+report.html
+data/
+!data/.gitkeep
+
+# IDE / OS
+.idea/
+.vscode/
+.gigaide/
+.gigacode/
+.DS_Store
+Thumbs.db

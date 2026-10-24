@@ -1,0 +1,447 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-09-13T00:00:00Z",
+  "description": "Trading instruments configuration",
+  "instruments": [
+    {
+      "figi": "BBG004S68614",
+      "ticker": "AFKS",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004S683W7",
+      "ticker": "AFLT",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG00475K6C3",
+      "ticker": "CHMF",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "TCS00A1002V2",
+      "ticker": "EUTR",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG000R04X57",
+      "ticker": "FLOT",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004730RP0",
+      "ticker": "GAZP",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004731032",
+      "ticker": "LKOH",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004RVFCY3",
+      "ticker": "MGNT",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004730JJ5",
+      "ticker": "MOEX",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG00475KKY8",
+      "ticker": "NVTK",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "TCS80A10CW95",
+      "ticker": "OZON",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004S68BH6",
+      "ticker": "PIKK",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "TCS00A103X66",
+      "ticker": "POSI",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004730N88",
+      "ticker": "SBER",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004S681M2",
+      "ticker": "SNGSP",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "TCS80A107UL4",
+      "ticker": "T",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004730ZJ9",
+      "ticker": "VTBR",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "TCS03A108X38",
+      "ticker": "X5",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "FUTCNY092600",
+      "ticker": "CRU6",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG000VJ5YR4",
+      "ticker": "GLDRUB_TOM",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG0013HRTL0",
+      "ticker": "CNYRUB_TOM",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "TCS00A107T19",
+      "ticker": "YDEX",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004S68B31",
+      "ticker": "ALRS",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004S68507",
+      "ticker": "MAGN",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004RVFFC0",
+      "ticker": "TATN",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004731489",
+      "ticker": "GMKN",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG00F6NKQX3",
+      "ticker": "SMLT",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG008F2T3T2",
+      "ticker": "RUAL",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "TCS00A106YF0",
+      "ticker": "VKCO",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004S681B4",
+      "ticker": "NLMK",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "TCS60A0JQ9P9",
+      "ticker": "SPBE",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "RU000A106T36",
+      "ticker": "ASTR",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "TCS00A0ZZAC4",
+      "ticker": "SVCB",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG00475KHX6",
+      "ticker": "TRNFP",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG0100R9963",
+      "ticker": "SGZH",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004S689R0",
+      "ticker": "PHOR",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004S681W1",
+      "ticker": "MTSS",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "TCS20A107662",
+      "ticker": "HEAD",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004S68473",
+      "ticker": "IRAO",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG002458LF8",
+      "ticker": "SELG",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG003LYCMB1",
+      "ticker": "SFIN",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004S682Z6",
+      "ticker": "RTKM",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "TCS00A10ANA1",
+      "ticker": "CNRU",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    {
+      "figi": "BBG004S687W8",
+      "ticker": "MSNG",
+      "enabled": true,
+      "timeframes": [
+        "1h",
+        "4h",
+        "1d"
+      ]
+    }
+  ]
+}

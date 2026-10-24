@@ -1,0 +1,9 @@
+# Normalize line endings: LF in repository, LF in working copy.
+* text=auto eol=lf
+
+# Binary artifacts
+*.whl binary
+*.xlsx binary
+*.png binary
+*.jpg binary
+*.pdf binary

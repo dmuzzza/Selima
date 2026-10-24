@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backtest Analytics — Dual MA Crossover</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <header class="topbar">
+        <div class="topbar__left">
+            <h1>📊 Backtest Analytics</h1>
+            <span class="badge" id="strategy-badge">Dual MA Crossover</span>
+        </div>
+        <div class="topbar__right">
+            <span class="status-dot" id="status-dot"></span>
+            <span id="status-text" class="status-text">подключение…</span>
+        </div>
+    </header>
+
+    <!-- ═══════════ ФИЛЬТРЫ ═══════════ -->
+    <section class="filters card">
+        <div class="filters__grid">
+            <div class="filter">
+                <label for="f-tickers">Тикеры</label>
+                <select id="f-tickers" multiple size="1"></select>
+            </div>
+            <div class="filter">
+                <label for="f-timeframe">Таймфрейм</label>
+                <select id="f-timeframe"></select>
+            </div>
+            <div class="filter">
+                <label for="f-direction">Направление</label>
+                <select id="f-direction">
+                    <option value="">Все</option>
+                    <option value="Long">Long</option>
+                    <option value="Short">Short</option>
+                </select>
+            </div>
+            <div class="filter">
+                <label for="f-date-from">Период с</label>
+                <input type="date" id="f-date-from">
+            </div>
+            <div class="filter">
+                <label for="f-date-to">по</label>
+                <input type="date" id="f-date-to">
+            </div>
+            <div class="filter filter--checkbox">
+                <label class="checkbox">
+                    <input type="checkbox" id="f-profitable">
+                    <span>Только прибыльные тикеры</span>
+                </label>
+            </div>
+        </div>
+        <div class="filters__actions">
+            <button id="btn-apply" class="btn btn--primary">Применить</button>
+            <button id="btn-reset" class="btn btn--ghost">Сбросить</button>
+            <span id="loading" class="loading hidden">⏳ загрузка…</span>
+        </div>
+    </section>
+
+    <!-- ═══════════ KPI ═══════════ -->
+    <section class="kpi-grid" id="kpi-grid">
+        <!-- заполняется из app.js -->
+    </section>
+
+    <!-- ═══════════ ГРАФИКИ ═══════════ -->
+    <section class="charts-grid">
+        <div class="card chart-card chart-card--wide">
+            <h2>Кривая баланса</h2>
+            <div class="chart-wrap"><canvas id="chart-balance"></canvas></div>
+        </div>
+        <div class="card chart-card chart-card--wide">
+            <h2>PnL по месяцам</h2>
+            <div class="chart-wrap"><canvas id="chart-pnl"></canvas></div>
+        </div>
+        <div class="card chart-card">
+            <h2>Одновременные открытые позиции (среднее в месяц)</h2>
+            <div class="chart-wrap"><canvas id="chart-concurrent"></canvas></div>
+            <p class="chart-note">Среднее число сделок, открытых одновременно в течение месяца,
+                по направлениям. Линия — пик (максимум) за месяц.</p>
+        </div>
+        <div class="card chart-card">
+            <h2>Win / Loss по месяцам</h2>
+            <div class="chart-wrap"><canvas id="chart-winloss"></canvas></div>
+        </div>
+        <div class="card chart-card">
+            <h2>Распределение PnL по сделкам, %</h2>
+            <div class="chart-wrap"><canvas id="chart-hist"></canvas></div>
+        </div>
+        <div class="card chart-card">
+            <h2>Среднее время удержания, дней</h2>
+            <div class="chart-wrap"><canvas id="chart-hold"></canvas></div>
+        </div>
+    </section>
+
+    <!-- ═══════════ СВОДНАЯ ТАБЛИЦА ═══════════ -->
+    <section class="card table-card">
+        <div class="table-card__header">
+            <h2>Сводка по тикерам</h2>
+            <input type="text" id="summary-search" class="search" placeholder="Поиск тикера…">
+        </div>
+        <div class="table-scroll">
+            <table id="summary-table">
+                <thead></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- ═══════════ ТАБЛИЦА СДЕЛОК ═══════════ -->
+    <section class="card table-card">
+        <div class="table-card__header">
+            <h2>Сделки <span id="trades-count" class="muted"></span></h2>
+        </div>
+        <div class="table-scroll">
+            <table id="trades-table">
+                <thead></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div class="pagination">
+            <button id="pg-first" class="btn btn--ghost">⏮</button>
+            <button id="pg-prev" class="btn btn--ghost">◀</button>
+            <span id="pg-info" class="muted"></span>
+            <button id="pg-next" class="btn btn--ghost">▶</button>
+            <button id="pg-last" class="btn btn--ghost">⏭</button>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <span id="generated-at" class="muted"></span>
+    </footer>
+
+    <script src="/app.js"></script>
+</body>
+</html>

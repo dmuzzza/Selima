@@ -1,0 +1,74 @@
+//@version=5
+indicator(title="MFI + Bollinger Bands", shorttitle="MFI_BB", overlay=false)
+
+// ─── INPUTS ───────────────────────────────────────────────────────────────────
+mfi_period  = input.int(14,  minval=1,  title="MFI Period")
+bb_period   = input.int(20,  minval=2,  title="BB Period")
+bb_mult     = input.float(2.0, minval=0.1, step=0.1, title="BB Multiplier")
+
+ob_level    = input.int(80,  title="Overbought Level")
+os_level    = input.int(20,  title="Oversold Level")
+
+bull_col    = input.color(color.new(#10b1a1, 0),  title="Bullish Signal Color")
+bear_col    = input.color(color.new(#ff1744, 0),  title="Bearish Signal Color")
+neutral_col = input.color(color.new(#000000, 0), title="MFI Line Color")
+
+// ─── MFI CALCULATION ─────────────────────────────────────────────────────────
+typical_price = (high + low + close) / 3
+money_flow    = typical_price * volume
+
+pos_flow = money_flow * (typical_price > typical_price[1] ? 1 : 0)
+neg_flow = money_flow * (typical_price < typical_price[1] ? 1 : 0)
+
+pos_sum = math.sum(pos_flow, mfi_period)
+neg_sum = math.sum(neg_flow, mfi_period)
+
+mfr = neg_sum == 0 ? 100 : pos_sum / neg_sum
+mfi = 100 - (100 / (1 + mfr))
+
+// ─── BOLLINGER BANDS ON MFI ──────────────────────────────────────────────────
+bb_mid   = ta.sma(mfi, bb_period)
+bb_std   = ta.stdev(mfi, bb_period)
+bb_upper = bb_mid + bb_mult * bb_std
+bb_lower = bb_mid - bb_mult * bb_std
+
+// ─── SIGNALS (на выходе из зоны) ─────────────────────────────────────────────
+// Шорт: MFI был выше верхней полосы, теперь вернулся под неё
+signal_short = mfi[1] > bb_upper[1] and mfi <= bb_upper
+
+// Лонг: MFI был ниже нижней полосы, теперь вернулся над неё
+signal_long  = mfi[1] < bb_lower[1] and mfi >= bb_lower
+
+// ─── BACKGROUND HIGHLIGHT ────────────────────────────────────────────────────
+bgcolor(signal_long  ? color.new(#00e676, 85) : na, title="Long Zone BG")
+bgcolor(signal_short ? color.new(#ff1744, 85) : na, title="Short Zone BG")
+
+// ─── PLOTS ───────────────────────────────────────────────────────────────────
+plot(mfi,      title="MFI",        color=neutral_col, linewidth=2)
+p_upper = plot(bb_upper, title="BB Upper", color=color.new(#00e676, 30), linewidth=1)
+p_lower = plot(bb_lower, title="BB Lower", color=color.new(#00e676, 30), linewidth=1)
+p_mid   = plot(bb_mid,   title="BB Mid",   color=color.new(#ffffff, 70), linewidth=1, style=plot.style_line)
+fill(p_upper, p_lower, color=color.new(#00e676, 92), title="BB Fill")
+
+// Статические уровни
+hline(ob_level, "Overbought", color=color.new(#ff1744, 60), linestyle=hline.style_dashed)
+hline(os_level, "Oversold",   color=color.new(#00e676, 60), linestyle=hline.style_dashed)
+hline(50,       "Midline",    color=color.new(#ffffff, 80), linestyle=hline.style_dotted)
+
+// ─── SIGNALS ON MFI LINE ─────────────────────────────────────────────────────
+plotshape(signal_long  and not signal_long[1],  title="Long Signal",
+     style=shape.triangleup,   location=location.bottom,
+     color=bull_col, size=size.small)
+
+plotshape(signal_short and not signal_short[1], title="Short Signal",
+     style=shape.triangledown, location=location.top,
+     color=bear_col, size=size.small)
+
+// ─── ALERTS ──────────────────────────────────────────────────────────────────
+alertcondition(signal_long  and not signal_long[1],
+     title="MFI BB: Long Signal",
+     message="MFI пробил верхнюю полосу Боллинджера — лонг-сигнал")
+
+alertcondition(signal_short and not signal_short[1],
+     title="MFI BB: Short Signal",
+     message="MFI пробил нижнюю полосу Боллинджера — шорт-сигнал")
