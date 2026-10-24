@@ -11,7 +11,7 @@ import logging
 from typing import List, Optional
 
 from src.market_data.models import Candle
-from src.strategies.base_strategy import BaseStrategy, Signal, Trade
+from src.strategies.base_strategy import BaseStrategy, Signal
 from .signal_validator import create_default_validator, create_strict_validator, create_custom_validator
 
 from .config import get_config
@@ -279,154 +279,8 @@ class SMACrossoverStrategy(BaseStrategy):
 
 
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # СИМУЛЯЦИЯ ТОРГОВЛИ
-    # ═══════════════════════════════════════════════════════════════════════
-
-    def execute_trades(self, candles: List[Candle]) -> List[Trade]:
-        """
-        Симулировать торговлю на основе сигналов.
-        
-        Args:
-            candles: Список свечей
-        
-        Returns:
-            List[Trade]: Список сделок
-        """
-        if not self.signals:
-            self.logger.warning("No signals to execute.")
-            return []
-
-        trades = []
-        trade_id = 1
-        current_trade: Optional[Trade] = None
-        current_balance = self.initial_balance
-
-        for candle_idx, candle in enumerate(candles):
-            # ───────────────────────────────────────────────────────────────
-            # ПРОВЕРКА TP/SL ДЛЯ ОТКРЫТОЙ ПОЗИЦИИ
-            # ───────────────────────────────────────────────────────────────
-
-            if current_trade is not None:
-                # LONG: проверяем TP на High, SL на Low
-                if current_trade.is_long():
-                    if candle.high >= current_trade.tp_level:
-                        current_trade.exit_time = candle.open_time
-                        current_trade.exit_index = candle_idx
-                        current_trade.exit_price = current_trade.tp_level
-                        current_trade.exit_type = "TP"
-                        self._calculate_pnl(current_trade, current_balance)
-                        current_balance += current_trade.pnl_abs
-                        trades.append(current_trade)
-
-                        if self.debug:
-                            self.logger.debug(
-                                f"→ {current_trade} | Balance: {current_balance:.2f}"
-                            )
-
-                        current_trade = None
-                        continue
-
-                    if candle.low <= current_trade.sl_level:
-                        current_trade.exit_time = candle.open_time
-                        current_trade.exit_index = candle_idx
-                        current_trade.exit_price = current_trade.sl_level
-                        current_trade.exit_type = "SL"
-                        self._calculate_pnl(current_trade, current_balance)
-                        current_balance += current_trade.pnl_abs
-                        trades.append(current_trade)
-
-                        if self.debug:
-                            self.logger.debug(
-                                f"→ {current_trade} | Balance: {current_balance:.2f}"
-                            )
-
-                        current_trade = None
-                        continue
-
-                # SHORT: проверяем TP на Low, SL на High
-                elif current_trade.is_short():
-                    if candle.low <= current_trade.tp_level:
-                        current_trade.exit_time = candle.open_time
-                        current_trade.exit_index = candle_idx
-                        current_trade.exit_price = current_trade.tp_level
-                        current_trade.exit_type = "TP"
-                        self._calculate_pnl(current_trade, current_balance)
-                        current_balance += current_trade.pnl_abs
-                        trades.append(current_trade)
-
-                        if self.debug:
-                            self.logger.debug(
-                                f"→ {current_trade} | Balance: {current_balance:.2f}"
-                            )
-
-                        current_trade = None
-                        continue
-
-                    if candle.high >= current_trade.sl_level:
-                        current_trade.exit_time = candle.open_time
-                        current_trade.exit_index = candle_idx
-                        current_trade.exit_price = current_trade.sl_level
-                        current_trade.exit_type = "SL"
-                        self._calculate_pnl(current_trade, current_balance)
-                        current_balance += current_trade.pnl_abs
-                        trades.append(current_trade)
-
-                        if self.debug:
-                            self.logger.debug(
-                                f"→ {current_trade} | Balance: {current_balance:.2f}"
-                            )
-
-                        current_trade = None
-                        continue
-
-            # ───────────────────────────────────────────────────────────────
-            # ПРОВЕРКА НОВЫХ СИГНАЛОВ
-            # ───────────────────────────────────────────────────────────────
-
-            if current_trade is None:
-                for signal in self.signals:
-                    # Вход на следующей свече после сигнала
-                    if signal.candle_index == candle_idx - 1:
-                        entry_price = candle.open
-                        position_size = current_balance
-
-                        if signal.signal_type == "BULLISH":
-                            tp_level = entry_price * (1 + self.tp_percent / 100.0)
-                            sl_level = entry_price * (1 - self.sl_percent / 100.0)
-                        else:
-                            tp_level = entry_price * (1 - self.tp_percent / 100.0)
-                            sl_level = entry_price * (1 + self.sl_percent / 100.0)
-
-                        current_trade = Trade(
-                            trade_id=trade_id,
-                            entry_time=candle.open_time,
-                            entry_index=candle_idx,
-                            entry_price=entry_price,
-                            signal_type=signal.signal_type,
-                            tp_level=tp_level,
-                            sl_level=sl_level,
-                            quantity=position_size,
-                        )
-
-                        trade_id += 1
-
-                        if self.debug:
-                            self.logger.debug(
-                                f"ENTRY #{current_trade.trade_id}: {current_trade.signal_type} "
-                                f"@ {entry_price:.2f} (SIZE: {position_size:.0f}₽)"
-                            )
-                        break
-
-        # Добавляем открытую позицию
-        if current_trade is not None:
-            trades.append(current_trade)
-
-        self.trades = trades
-        self.logger.info(
-            f"Executed {len(trades)} trades "
-            f"({len([t for t in trades if not t.is_open()])} closed)"
-        )
-        return trades
+    # Симуляция торговли (TP/SL, размер позиции, PnL) выполняется общим движком
+    # `TradeSimulator` через BaseStrategy.execute_trades(). Стратегия отвечает
+    # только за сигналы (detect_signals) и, при необходимости, за entry_filter.
 
 

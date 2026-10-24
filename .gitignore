@@ -27,6 +27,8 @@ build/
 dist/
 
 # Data & artifacts
+debug/_old/
+debug/baseline_pnl*.json
 *.db
 *.db-journal
 *.sqlite3

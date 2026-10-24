@@ -70,10 +70,10 @@ ImportError; в логах нет токенов и `account_id`.
 | T1-1 | Провести инвентаризацию дубликатов и решить судьбу каждого: `src/sma_crossover/`, `src/candle_patterns/`, `app_dashboard.py`, `scheduler_notifier.py`, `src/backtest/`, `src/storage/models.py`, `levels_detector*`, `sma_crossover_strategy.py` | S | done (список в ARCHITECTURE §9) |
 | T1-2 | Удалить/переместить дубликаты: оставить `src/strategies/sma_crossover/`, удалить `src/sma_crossover/`; `app_dashboard.py` → `archive/`; `src/backtest/backtester.py` → `archive/` (после T3-3) | M | todo |
 | T1-3 | Разделить корень: production (`scheduler.py`, `scheduler_notifier.py`, `dashboard/`) и `tools/` (все `*.py`-скрипты из корня, `debug/`, `optimization/`, `scripts/`) | M | todo |
-| T1-4 | Исправить дефекты логики: двойной `check_last_signal` (`scheduler.py:463,512`), двойной `allow_short` (`base_strategy.py:208,221`), `total_pnl_percent` (`base_strategy.py:293`), сортировка перед Sharpe/Z-score | M | todo |
+| T1-4 | Исправить дефекты логики: двойной `check_last_signal` (`scheduler.py:463,512`), двойной `allow_short` (`base_strategy.py:208,221`), `total_pnl_percent` (`base_strategy.py:293`), сортировка перед Sharpe/Z-score | M | in-progress (двойной `allow_short` исправлен; остальное — todo) |
 | T1-5 | Привести время к единой зоне: всё хранится в UTC (aware), в MSK конвертируется только на выводе. Заменить `datetime.now()` на `datetime.now(timezone.utc)` | M | todo |
 | T1-6 | Убрать расхождение документации и кода: `max_positions_per_account` (6 vs 3), cron P2 (`*/3` vs «15 минут»), часы работы планировщика | S | todo |
-| T1-7 | Ввести `ruff` + `mypy` + `pytest`, прогнать по проекту, зафиксировать baseline (ошибки — в отдельный список) | M | todo |
+| T1-7 | Ввести `ruff` + `mypy` + `pytest`, прогнать по проекту, зафиксировать baseline (ошибки — в отдельный список) | M | in-progress (`pyproject.toml` настроен; ruff: 65 legacy-замечаний (UP006/UP035/UP045, `I001`, `F841`, `SIM102`), mypy: 56 ошибок в 7 файлах — в основном implicit Optional и `None`-арифметика в стратегиях. Новые модули (`simulator.py`, `tests/`) — чистые) |
 
 **Приёмка T1:** в `src/` нет файлов-дубликатов; линтер и типы проходят на ядре;
 `docs/ARCHITECTURE.md` соответствует дереву.
@@ -84,7 +84,7 @@ ImportError; в логах нет токенов и `account_id`.
 
 | ID | Идея | Приоритет | Оценка | Статус |
 |---|---|---|---|---|
-| T2-1 | **Один движок бэктеста** (`TradeSimulator`) вместо копии цикла в каждой стратегии | P0 | L | todo |
+| T2-1 | **Один движок бэктеста** (`TradeSimulator`) вместо копии цикла в каждой стратегии | P0 | L | done (T3-3) |
 | T2-2 | **Конфигурация через pydantic-settings**: один `Settings` вместо `os.getenv` в 15 файлах, валидация на старте, понятные ошибки | P1 | M | todo |
 | T2-3 | **TP/SL в конфиг-файле** (YAML/JSON) с валидацией, вместо словаря в Python; версионирование параметров и привязка к результатам оптимизации | P1 | M | todo |
 | T2-4 | **Единое хранилище сделок** (PostgreSQL) + Alembic; SQLite — только для локальной разработки | P1 | L | in-progress (scheduler и notifier переведены на PG; Alembic и перенос старых данных — todo) |
@@ -113,14 +113,14 @@ ImportError; в логах нет токенов и `account_id`.
 |---|---|---|---|
 | T3-1 | Зафиксировать контракт v1 (фактические модели и методы) — **сделано** в `STRATEGY_CONTRACT.md` §2–3 | S | done |
 | T3-2 | Добавить в `BaseStrategy` дефолтные `check_last_signal()` и `execute_live_trades()`, удалить копии из стратегий | M | done |
-| T3-3 | Вынести цикл TP/SL в `src/backtest/simulator.py` (`TradeSimulator`, `ExitRules`, `SizingRules`, `CostModel`); стратегии вызывают движок | L | todo |
+| T3-3 | Вынести цикл TP/SL в `src/backtest/simulator.py` (`TradeSimulator`, `ExitRules`, `SizingRules`, `CostModel`); стратегии вызывают движок | L | done (движок + `BaseStrategy.execute_trades`; `CostModel` остался в `BaseStrategy._calculate_commissions`) |
 | T3-4 | Ввести `ExitPolicy` (протокол) + реализацию `PercentExitPolicy`; перенести TP/SL по тикерам в конфиг | M | todo |
 | T3-5 | Исправить модель исполнения в симуляторе: `position_size_percent`, несколько позиций, порядок TP/SL по фактическому касанию, гэпы, `exit_time` | M | todo |
 | T3-6 | Ввести `code`/`name`/`description` как атрибуты класса; реестр — через декоратор `@register_strategy` (убрать ручные импорты) | S | todo |
 | T3-7 | Унифицировать `Trade` (бэктест) и `LiveTrade` (live): общий `TradeRecord` или явный маппер `to_live_trade()` | M | todo |
 | T3-8 | Тест-паритет: `detect_signals(...)[-1]` == `check_last_signal(...)` на N инструментах и таймфреймах | M | todo |
 | T3-9 | Шаблон новой стратегии: `src/strategies/_template/` (config.py + strategy.py + test) | S | todo |
-| T3-10 | Перевести существующие стратегии на v2 (`sma_crossover`, `dual_ma_crossover_after_testing`), сверить PnL до/после на истории | L | todo |
+| T3-10 | Перевести существующие стратегии на v2 (`sma_crossover`, `dual_ma_crossover_after_testing`), сверить PnL до/после на истории | L | done (dual_ma — бит-в-бит на 40 прогонах; sma_crossover изменился осознанно, см. ADR-011) |
 
 **Приёмка T3:** новая стратегия = 2 файла + строка регистрации; `pytest` содержит
 тест-паритет; бэктест и live используют один и тот же `ExitRules`.

@@ -205,7 +205,6 @@ class BaseStrategy(ABC):
         self.timeframe = timeframe
         self.config = config or {}
         self.debug = debug
-        self.allow_short = self.config.get("allow_short", True)  # True = торгуем в обе стороны
         self.logger = logging.getLogger(self.__class__.__name__)
 
         # Данные стратегии
@@ -244,18 +243,66 @@ class BaseStrategy(ABC):
         """
         pass
 
-    @abstractmethod
+    def entry_filter(self, candle_index: int, candle: Candle, signal: Signal) -> bool:
+        """
+        Разрешить или запретить вход по сигналу (хук для подклассов).
+
+        Вызывается симулятором на свече входа, то есть на свече после сигнальной:
+        здесь доступны цена открытия этой свечи и значения индикаторов с индексом
+        `candle_index`.
+
+        Args:
+            candle_index: Индекс свечи, на которой открывается позиция
+            candle: Сама свеча (цена входа — `candle.open`)
+            signal: Сигнал, породивший попытку входа
+
+        Returns:
+            bool: True — вход разрешён, False — сигнал пропускается
+        """
+        return True
+
     def execute_trades(self, candles: List[Candle]) -> List[Trade]:
         """
-        Симулировать торговлю на основе сигналов.
-        
+        Симулировать торговлю на основе сигналов (общий движок для всех стратегий).
+
+        Единственная реализация цикла TP/SL — `src/backtest/simulator.py`.
+        Стратегия не должна переопределять этот метод: различия в критериях входа
+        задаются через `detect_signals()` и `entry_filter()`, а TP/SL — через
+        `tp_percent`/`sl_percent` в конфиге.
+
         Args:
             candles: Список свечей
-        
+
         Returns:
-            List[Trade]: Список сделок
+            List[Trade]: Список сделок (закрытые + открытая на конец периода)
         """
-        pass
+        # Импорт внутри метода: simulator импортирует модели из этого модуля.
+        from src.backtest.simulator import ExitRules, SizingRules, TradeSimulator
+
+        if not self.signals:
+            self.logger.warning("No signals to execute.")
+            self.trades = []
+            return []
+
+        simulator = TradeSimulator(
+            exit_rules=ExitRules(tp_percent=self.tp_percent, sl_percent=self.sl_percent),
+            sizing=SizingRules(
+                initial_balance=self.initial_balance,
+                position_size_percent=self.position_size_percent,
+            ),
+            on_close=self._calculate_pnl,
+            entry_filter=self.entry_filter,
+            allow_short=self.allow_short,
+            logger=self.logger,
+            debug=self.debug,
+        )
+
+        trades = simulator.run(candles, self.signals)
+        self.trades = trades
+
+        closed = len([t for t in trades if not t.is_open()])
+        self.logger.info(f"Executed {len(trades)} trades ({closed} closed)")
+        return trades
 
     @property
     @abstractmethod
@@ -300,8 +347,14 @@ class BaseStrategy(ABC):
         last_index = len(candles) - 1
 
         for signal in reversed(signals):
-            if signal.candle_index == last_index:
-                return signal
+            if signal.candle_index != last_index:
+                continue
+            # Тот же фильтр, что и в симуляции: при allow_short=False бэктест
+            # не открывает SHORT, значит и live не должен.
+            if signal.signal_type == "BEARISH" and not self.allow_short:
+                self.logger.info("BEARISH signal ignored (allow_short=False)")
+                return None
+            return signal
 
         return None
 
@@ -329,12 +382,20 @@ class BaseStrategy(ABC):
             self.logger.warning("No signals to execute live.")
             return []
 
+        signals = self.signals
+        if not self.allow_short:
+            # Тот же фильтр, что и в бэктесте: SHORT не открывается вовсе.
+            signals = [s for s in signals if s.signal_type != "BEARISH"]
+            if not signals:
+                self.logger.info("No executable signals after allow_short filter")
+                return []
+
         self.logger.info(
-            f"🚀 Executing LIVE trades: {len(self.signals)} signals for {ticker}"
+            f"🚀 Executing LIVE trades: {len(signals)} signals for {ticker}"
         )
 
         live_trades = orchestrator.process_signals(
-            signals=self.signals,
+            signals=signals,
             ticker=ticker,
             figi=figi,
             tp_percent=self.tp_percent,
@@ -750,12 +811,11 @@ class BaseStrategy(ABC):
         signals = self.detect_signals(candles)
         trades = self.execute_trades(candles)
 
-        # ✅ Фильтр: убираем SHORT, если allow_short=False
+        # SHORT уже отфильтрованы движком (allow_short); здесь убираем их из
+        # self.signals, чтобы дашборд не рисовал неисполненные сигналы.
         if not self.allow_short:
             self.signals = [s for s in self.signals if s.signal_type != "BEARISH"]
-            self.trades = [t for t in self.trades if not t.is_short()]
             signals = self.signals
-            trades = self.trades
 
         # ✅ MFE/MAE и движение после входа для всех стратегий
         for t in trades:

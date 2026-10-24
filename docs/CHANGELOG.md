@@ -7,6 +7,13 @@
 
 ### Added
 
+- `src/backtest/simulator.py`: единый движок симуляции `TradeSimulator` +
+  `ExitRules`/`SizingRules` (T3-3, ADR-011). Один цикл TP/SL для всех стратегий.
+- `BaseStrategy.entry_filter()`: хук входа на свече исполнения (доступны `candle.open`
+  и значения индикаторов); `BaseStrategy.execute_trades()` стал общей реализацией.
+- `tests/test_trade_simulator.py`: 13 тестов движка (вход по open следующей свечи,
+  TP/SL для LONG и SHORT, одна позиция, `position_size_percent`, `entry_filter`).
+- `tests/test_allow_short_parity.py`: 7 тестов паритета backtest/live по `allow_short`.
 - Идемпотентность live-сигналов (T2-5): `build_signal_key()` в
   `src/trading/models.py`, колонка `live_trades.signal_key` + частичный уникальный
   индекс, `PgLiveTradeRepository.create_pending_if_absent()` — атомарная вставка
@@ -78,6 +85,17 @@
 
 ### Changed
 
+- `sma_crossover`, `dual_ma_crossover_after_testing`: удалены собственные
+  `execute_trades()` (~130 строк каждая). Логика входа вынесена в `entry_filter()`,
+  выход считает `TradeSimulator`.
+- `sma_crossover`: исторические результаты бэктеста изменились. Раньше SHORT-сигналы
+  симулировались, занимали единственный слот и меняли баланс, а затем выбрасывались из
+  статистики; теперь при `allow_short=False` SHORT не открывается вовсе (ADR-011).
+  `dual_ma_crossover_after_testing` (`allow_short=True`) не изменился: 40 прогонов,
+  PnL и число сделок совпали с прежними.
+- `check_last_signal()` и `execute_live_trades()` учитывают `allow_short`: BEARISH
+  сигнал не передаётся в live, если стратегия не торгует шорт.
+- `BaseStrategy.__init__`: убрано двойное присваивание `self.allow_short` (T1-4).
 - `scheduler.py`: сделки и стоп-ордера пишутся в PostgreSQL
   (`PgLiveTradeRepository` / `PgStopOrderRepository`), SQLite из production-пути убран.
   Репозитории создаются один раз за процесс (`_trade_repositories()`).

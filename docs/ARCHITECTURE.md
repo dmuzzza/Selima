@@ -132,7 +132,9 @@ p_selima_v8.1/
 │   │   └── reconciler.py              сверка API → БД, закрытие сделок
 │   │
 │   ├── analytics/strategy_analyzer.py [C] метрики, интерпретация, отчёт по результату стратегии
-│   ├── backtest/backtester.py         [L] отдельный движок бэктеста (не используется стратегиями)
+│   ├── backtest/
+│   │   ├── simulator.py               [C] TradeSimulator, ExitRules, SizingRules — единый цикл TP/SL
+│   │   └── backtester.py              [L] отдельный движок бэктеста (не используется стратегиями)
 │   ├── storage/models.py              [L] устаревшая ORM-модель "marketdata"
 │   └── utils/
 │       ├── crypto.py                  [C] Fernet: encrypt/decrypt/hash account_id
@@ -141,7 +143,9 @@ p_selima_v8.1/
 ├── tests/                             [C] pytest
 │   ├── test_strategy_contract.py      контракт BaseStrategy: live-методы, паритет сигналов
 │   ├── test_trading_mode.py           разбор TRADING_MODE / LIVE_CONFIRM
-│   └── test_signal_idempotency.py     signal_key: стабильность, повторный сигнал не создаёт сделку
+│   ├── test_signal_idempotency.py     signal_key: стабильность, повторный сигнал не создаёт сделку
+│   ├── test_trade_simulator.py        TradeSimulator: вход/TP/SL/размер позиции/entry_filter
+│   └── test_allow_short_parity.py     backtest и live одинаково соблюдают allow_short
 │
 ├── dashboard/                         [C] актуальный дашборд
 │   ├── app.py                         точка входа: Dash, init data layer
@@ -273,9 +277,14 @@ sequenceDiagram
 
 Два независимых пути исполнения:
 
-- **Бэктест**: `strategy.run(candles)` → `detect_signals()` → `execute_trades()`
-  (симуляция TP/SL по high/low) → `calculate_stats()`.
+- **Бэктест**: `strategy.run(candles)` → `detect_signals()` → `TradeSimulator.run()`
+  (вход по `open` следующей свечи, TP/SL по `high`/`low`) → `calculate_stats()`.
 - **Live**: `check_last_signal()` → `execute_live_trades(orchestrator, ...)` → API.
+
+Правила выхода задаются один раз: `ExitRules` в `TradeSimulator`, TP/SL — из конфига
+стратегии. Критерии входа — `detect_signals()` плюс `entry_filter()` (хук на свече
+исполнения). `allow_short` соблюдается всеми тремя путями: симуляцией,
+`check_last_signal()` и `execute_live_trades()`.
 
 Используются разные модели: `Trade` (симуляция) и `LiveTrade` (реальная торговля),
 см. `docs/STRATEGY_CONTRACT.md`.
@@ -422,20 +431,27 @@ PostgreSQL). Оставлен для legacy-скриптов и локальны
 ### Логика
 
 5. `scheduler.py:463` и `:512` — `check_last_signal()` вызывается дважды за итерацию.
-6. `base_strategy.py:208,221` — `self.allow_short` присваивается дважды.
+6. ~~`base_strategy.py:208,221` — `self.allow_short` присваивается дважды.~~
+   **Исправлено (T3-3):** присваивание одно.
 7. `base_strategy.py:293-294` — `total_pnl_percent` делится на `initial_balance`, хотя
    `total_pnl` считается по фактическим позициям; при `position_size_percent < 100`
    доходность занижена.
 8. `base_strategy.py:382-383` — Sharpe берёт `closed_trades[0]` без сортировки по времени.
 9. `base_strategy.py:390-406` — Z-score считается по несортированному списку сделок.
-10. `execute_trades()` в каждой стратегии: `position_size = current_balance`
+10. ~~`execute_trades()` в каждой стратегии: `position_size = current_balance`
     (`position_size_percent` игнорируется), одна позиция одновременно, `exit_time`
     равен `candle.open_time` (время выхода некорректно), TP и SL проверяются в одной
-    свече без приоритета «что раньше» (всегда TP первым — оптимистично).
-10a. `dual_ma_crossover_after_testing`: фильтр `max_adaptive_deviation_percent`
-    применяется только в `execute_trades` (проверка цены открытия следующей свечи),
-    поэтому live может открыть сделку, которую бэктест отклоняет. См.
-    `docs/STRATEGY_CONTRACT.md` §3.2.
+    свече без приоритета «что раньше» (всегда TP первым — оптимистично).~~
+    **Частично исправлено (T3-3, ADR-011):** цикл вынесен в `TradeSimulator`,
+    `position_size_percent` учитывается. Осталось осознанно (T3-5): одна позиция
+    одновременно, `exit_time` = `candle.open_time`, TP проверяется раньше SL,
+    нет проскальзывания и гэпов.
+10a. ~~`dual_ma_crossover_after_testing`: фильтр `max_adaptive_deviation_percent`
+    применяется только в `execute_trades`, поэтому live может открыть сделку, которую
+    бэктест отклоняет.~~ **Частично исправлено (T3-3):** фильтры вынесены в
+    `entry_filter()`, который вызывается на свече исполнения — той же, что видит
+    бэктест. Остаточное расхождение: live не знает `open` следующей свечи на момент
+    сигнала, поэтому `check_last_signal()` фильтр не применяет (T3-4, `EntryPolicy`).
 11. `config/commissions.py:41` — `COMMISSION_MODE = "SHORT_ONLY"` глобально; бэктест
     LONG не учитывает комиссии, сравнение стратегий некорректно.
 12. `config/trading_config.py:13` — `max_positions_per_account = 6`, а

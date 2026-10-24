@@ -20,8 +20,7 @@ import logging
 from typing import List, Optional
 
 from src.market_data.models import Candle
-from src.strategies.base_strategy import BaseStrategy, Signal, Trade
-from src.strategies.indicators_builder import IndicatorsBuilder
+from src.strategies.base_strategy import BaseStrategy, Signal
 
 from .config import get_config
 
@@ -296,188 +295,52 @@ class DualMACrossoverStrategy(BaseStrategy):
         return signals
 
     # ═══════════════════════════════════════════════════════════════════════
-    # СИМУЛЯЦИЯ ТОРГОВЛИ
+    # ФИЛЬТРЫ ВХОДА
     # ═══════════════════════════════════════════════════════════════════════
 
-    def execute_trades(self, candles: List[Candle]) -> List[Trade]:
+    def entry_filter(self, candle_index: int, candle: Candle, signal: Signal) -> bool:
         """
-        Симулировать торговлю на основе сигналов.
-        
-        Args:
-            candles: Список свечей
-        
-        Returns:
-            List[Trade]: Список сделок
+        Трендовый фильтр EMA и ограничение отклонения от MA Adaptive.
+
+        Симуляция (TP/SL, размер позиции, PnL) выполняется общим движком
+        `TradeSimulator`; здесь остаётся только то, что специфично для стратегии.
+        Фильтры проверяются на свече входа (по `candle.open`).
         """
-        if not self.signals:
-            self.logger.warning("No signals to execute.")
-            return []
+        entry_price = candle.open
 
-        trades = []
-        trade_id = 1
-        current_trade: Optional[Trade] = None
-        current_balance = self.initial_balance
-
-        for candle_idx, candle in enumerate(candles):
-            # ───────────────────────────────────────────────────────────────
-            # ПРОВЕРКА TP/SL ДЛЯ ОТКРЫТОЙ ПОЗИЦИИ
-            # ───────────────────────────────────────────────────────────────
-
-            if current_trade is not None:
-                # LONG: проверяем TP на High, SL на Low
-                if current_trade.is_long():
-                    if candle.high >= current_trade.tp_level:
-                        current_trade.exit_time = candle.open_time
-                        current_trade.exit_index = candle_idx
-                        current_trade.exit_price = current_trade.tp_level
-                        current_trade.exit_type = "TP"
-                        self._calculate_pnl(current_trade, current_balance)
-                        current_balance += current_trade.pnl_abs
-                        trades.append(current_trade)
-
-                        if self.debug:
-                            self.logger.debug(
-                                f"→ {current_trade} | Balance: {current_balance:.2f}"
-                            )
-
-                        current_trade = None
-                        continue
-
-                    if candle.low <= current_trade.sl_level:
-                        current_trade.exit_time = candle.open_time
-                        current_trade.exit_index = candle_idx
-                        current_trade.exit_price = current_trade.sl_level
-                        current_trade.exit_type = "SL"
-                        self._calculate_pnl(current_trade, current_balance)
-                        current_balance += current_trade.pnl_abs
-                        trades.append(current_trade)
-
-                        if self.debug:
-                            self.logger.debug(
-                                f"→ {current_trade} | Balance: {current_balance:.2f}"
-                            )
-
-                        current_trade = None
-                        continue
-
-                # SHORT: проверяем TP на Low, SL на High
-                elif current_trade.is_short():
-                    if candle.low <= current_trade.tp_level:
-                        current_trade.exit_time = candle.open_time
-                        current_trade.exit_index = candle_idx
-                        current_trade.exit_price = current_trade.tp_level
-                        current_trade.exit_type = "TP"
-                        self._calculate_pnl(current_trade, current_balance)
-                        current_balance += current_trade.pnl_abs
-                        trades.append(current_trade)
-
-                        if self.debug:
-                            self.logger.debug(
-                                f"→ {current_trade} | Balance: {current_balance:.2f}"
-                            )
-
-                        current_trade = None
-                        continue
-
-                    if candle.high >= current_trade.sl_level:
-                        current_trade.exit_time = candle.open_time
-                        current_trade.exit_index = candle_idx
-                        current_trade.exit_price = current_trade.sl_level
-                        current_trade.exit_type = "SL"
-                        self._calculate_pnl(current_trade, current_balance)
-                        current_balance += current_trade.pnl_abs
-                        trades.append(current_trade)
-
-                        if self.debug:
-                            self.logger.debug(
-                                f"→ {current_trade} | Balance: {current_balance:.2f}"
-                            )
-
-                        current_trade = None
-                        continue
-
-            # ───────────────────────────────────────────────────────────────
-            # ПРОВЕРКА НОВЫХ СИГНАЛОВ
-            # ───────────────────────────────────────────────────────────────
-
-            if current_trade is None:
-                for signal in self.signals:
-                    # Вход на следующей свече после сигнала
-                    if signal.candle_index == candle_idx - 1:
-                        entry_price = candle.open
-                        position_size = current_balance
-
-                        # ───────────────────────────────────────────────────
-                        # ФИЛЬТР 1: EMA200 — трендовый фильтр на входе
-                        # ───────────────────────────────────────────────────
-                        if self.use_ema_filter and self._ema_series is not None:
-                            ema_val = self._ema_series[candle_idx]
-                            if ema_val is not None:
-                                if signal.signal_type == "BULLISH" and entry_price < ema_val:
-                                    if self.debug:
-                                        self.logger.debug(
-                                            f"✗ ENTRY REJECTED (EMA200 filter): "
-                                            f"LONG entry_price={entry_price:.2f} < EMA200={ema_val:.2f}"
-                                        )
-                                    continue
-                                if signal.signal_type == "BEARISH" and entry_price > ema_val:
-                                    if self.debug:
-                                        self.logger.debug(
-                                            f"✗ ENTRY REJECTED (EMA200 filter): "
-                                            f"SHORT entry_price={entry_price:.2f} > EMA200={ema_val:.2f}"
-                                        )
-                                    continue
-
-                        # ───────────────────────────────────────────────────
-                        # ФИЛЬТР 2: Отклонение от MA Adaptive ≤ 1.2%
-                        # ───────────────────────────────────────────────────
-                        if self._ma_adaptive_series is not None:
-                            ma_adaptive_val = self._ma_adaptive_series[candle_idx]
-                            if ma_adaptive_val is not None:
-                                deviation_pct = abs(entry_price - ma_adaptive_val) / ma_adaptive_val * 100.0
-                                if deviation_pct > self.max_adaptive_deviation:
-                                    if self.debug:
-                                        self.logger.debug(
-                                            f"✗ ENTRY REJECTED (adaptive deviation): "
-                                            f"|{entry_price:.2f} - MA_Adaptive={ma_adaptive_val:.2f}| "
-                                            f"/ {ma_adaptive_val:.2f} = {deviation_pct:.2f}% > {self.max_adaptive_deviation}%"
-                                        )
-                                    continue
-
-                        if signal.signal_type == "BULLISH":
-                            tp_level = entry_price * (1 + self.tp_percent / 100.0)
-                            sl_level = entry_price * (1 - self.sl_percent / 100.0)
-                        else:
-                            tp_level = entry_price * (1 - self.tp_percent / 100.0)
-                            sl_level = entry_price * (1 + self.sl_percent / 100.0)
-
-                        current_trade = Trade(
-                            trade_id=trade_id,
-                            entry_time=candle.open_time,
-                            entry_index=candle_idx,
-                            entry_price=entry_price,
-                            signal_type=signal.signal_type,
-                            tp_level=tp_level,
-                            sl_level=sl_level,
-                            quantity=position_size,
+        # ФИЛЬТР 1: EMA200 — трендовый фильтр на входе
+        ema_series = getattr(self, "_ema_series", None)
+        if self.use_ema_filter and ema_series is not None:
+            ema_val = ema_series[candle_index]
+            if ema_val is not None:
+                if signal.signal_type == "BULLISH" and entry_price < ema_val:
+                    if self.debug:
+                        self.logger.debug(
+                            f"✗ ENTRY REJECTED (EMA200 filter): "
+                            f"LONG entry_price={entry_price:.2f} < EMA200={ema_val:.2f}"
                         )
+                    return False
+                if signal.signal_type == "BEARISH" and entry_price > ema_val:
+                    if self.debug:
+                        self.logger.debug(
+                            f"✗ ENTRY REJECTED (EMA200 filter): "
+                            f"SHORT entry_price={entry_price:.2f} > EMA200={ema_val:.2f}"
+                        )
+                    return False
 
-                        trade_id += 1
+        # ФИЛЬТР 2: Отклонение от MA Adaptive ≤ max_adaptive_deviation
+        adaptive_series = getattr(self, "_ma_adaptive_series", None)
+        if adaptive_series is not None:
+            ma_adaptive_val = adaptive_series[candle_index]
+            if ma_adaptive_val is not None:
+                deviation_pct = abs(entry_price - ma_adaptive_val) / ma_adaptive_val * 100.0
+                if deviation_pct > self.max_adaptive_deviation:
+                    if self.debug:
+                        self.logger.debug(
+                            f"✗ ENTRY REJECTED (adaptive deviation): "
+                            f"|{entry_price:.2f} - MA_Adaptive={ma_adaptive_val:.2f}| "
+                            f"/ {ma_adaptive_val:.2f} = {deviation_pct:.2f}% > {self.max_adaptive_deviation}%"
+                        )
+                    return False
 
-                        if self.debug:
-                            self.logger.debug(
-                                f"ENTRY #{current_trade.trade_id}: {current_trade.signal_type} "
-                                f"@ {entry_price:.2f} (SIZE: {position_size:.0f}₽)"
-                            )
-                        break
-
-        # Добавляем открытую позицию
-        if current_trade is not None:
-            trades.append(current_trade)
-
-        self.trades = trades
-        self.logger.info(
-            f"Executed {len(trades)} trades "
-            f"({len([t for t in trades if not t.is_open()])} closed)"
-        )
-        return trades
+        return True
