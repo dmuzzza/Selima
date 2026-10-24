@@ -149,7 +149,7 @@ ImportError; в логах нет токенов и `account_id`.
 | T5-3 | Dockerfile (multi-stage, `python:3.12-slim`, non-root, healthcheck) | P1 | todo |
 | T5-4 | docker-compose: app + postgres для локальной разработки | P1 | todo |
 | T5-5 | Alembic вместо ручных `migrations/*.py` | P2 | todo |
-| T5-6 | Инициализация git-репозитория, ветка `dev`, защита `main` | P0 (организационно) | todo |
+| T5-6 | Инициализация git-репозитория, ветка `dev`, защита `main` | P0 (организационно) | in-progress (repo + `dev` созданы; branch protection — в настройках GitHub) |
 
 ---
 
