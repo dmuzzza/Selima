@@ -7,6 +7,15 @@
 
 ### Added
 
+- `src/trading/pending_recovery.py`: `PendingRecovery` — дозакрытие зависших PENDING-сделок
+  (хвост T2-6, ADR-013). Сверяет запись с биржей: позиция есть → OPEN с данными из
+  портфеля; позиции и операций нет → CANCELLED с освобождением `signal_key`; операция
+  была, но позиции нет → остаётся PENDING и требует ручной проверки.
+- `PgLiveTradeRepository.get_stale_pending(older_than_minutes=30)`: выборка PENDING-записей
+  с занятым `signal_key`, которые не видны ни сборщику ордеров, ни сверке.
+- `tests/test_pending_recovery.py`: 5 тестов (усыновление позиции, отмена с освобождением
+  ключа, сохранение ключа при наличии операций, отказ API операций, SHORT с отрицательным
+  количеством).
 - `src/backtest/simulator.py`: единый движок симуляции `TradeSimulator` +
   `ExitRules`/`SizingRules` (T3-3, ADR-011). Один цикл TP/SL для всех стратегий.
 - `BaseStrategy.entry_filter()`: хук входа на свече исполнения (доступны `candle.open`
@@ -91,6 +100,9 @@
 
 ### Changed
 
+- `scheduler.py`, `scheduler_notifier.py`: `_startup_reconcile()` и P2
+  `monitor_open_positions()` сначала вызывают `PendingRecovery` — зависшие PENDING не
+  видны сверке, так как у них нет стоп-ордеров.
 - **Модель исполнения `TradeSimulator` (T3-5, ADR-012).** Бэктест больше не завышает
   результат: при касании TP и SL в одной свече исполняется SL; при гэпе (свеча открылась
   за уровнем) выход считается по `open`; `exit_time` — конец бара, а не его открытие.

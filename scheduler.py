@@ -649,6 +649,9 @@ class TradingScheduler:
         if not can_run_task(TaskPriority.BACKGROUND):
             return
 
+        # Зависшие PENDING не видны сверке (у них нет стоп-ордеров)
+        self._recover_pending_trades()
+
         try:
             from src.trading.reconciler import TradingReconciler
 
@@ -807,12 +810,37 @@ class TradingScheduler:
         logger.info("="*80 + "\n")
 
 
+    def _recover_pending_trades(self):
+        """
+        Дозакрыть зависшие PENDING-записи (хвост T2-6).
+
+        Процесс мог упасть между вставкой PENDING и записью OPEN: тогда на бирже
+        позиция есть (или была), а в БД сделка висит без position_id и держит
+        signal_key. `PendingRecovery` сверяет состояние с биржей и либо переводит
+        запись в OPEN, либо отменяет её и освобождает ключ.
+        """
+        from src.trading.pending_recovery import PendingRecovery
+
+        try:
+            trade_repo, _ = self._trade_repositories()
+            recovery = PendingRecovery(token=self.token, trade_repo=trade_repo, log=logger)
+            stats = recovery.recover()
+            if stats.errors:
+                self.stats["errors"] += stats.errors
+            return stats
+        except Exception as e:
+            logger.error(f"❌ Pending recovery failed: {e}", exc_info=True)
+            self.stats["errors"] += 1
+            return None
+
     def _startup_reconcile(self):
         """
         Однократная сверка при старте — закрывает позиции,
         которые исполнились пока программа не работала.
         """
         logger.info("🔄 STARTUP: Running initial reconciliation...")
+        # Сначала разбираем зависшие PENDING: у них нет stop_orders, сверка их не видит
+        self._recover_pending_trades()
         try:
             from src.trading.reconciler import TradingReconciler
             trade_repo, order_repo = self._trade_repositories()

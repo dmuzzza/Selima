@@ -129,6 +129,7 @@ p_selima_v8.1/
 │   │   ├── orchestrator.py            TradingOrchestrator.process_signals()
 │   │   ├── account_selector.py        LONG/SHORT → account_id из env
 │   │   ├── order_collector.py         сбор ID стоп-ордеров после открытия
+│   │   ├── pending_recovery.py        дозакрытие зависших PENDING по состоянию биржи (ADR-013)
 │   │   └── reconciler.py              сверка API → БД, закрытие сделок
 │   │
 │   ├── analytics/strategy_analyzer.py [C] метрики, интерпретация, отчёт по результату стратегии
@@ -145,7 +146,8 @@ p_selima_v8.1/
 │   ├── test_strategy_contract.py      контракт BaseStrategy: live-методы, паритет сигналов
 │   ├── test_trading_mode.py           разбор TRADING_MODE / LIVE_CONFIRM
 │   ├── test_signal_idempotency.py     signal_key: стабильность, повторный сигнал не создаёт сделку
-│   ├── test_trade_simulator.py        TradeSimulator: вход/TP/SL/размер позиции/entry_filter
+│   ├── test_pending_recovery.py       дозакрытие зависших PENDING (ADR-013)
+│   ├── test_trade_simulator.py        TradeSimulator: вход/TP/SL/гэпы/размер позиции/entry_filter
 │   └── test_allow_short_parity.py     backtest и live одинаково соблюдают allow_short
 │
 ├── dashboard/                         [C] актуальный дашборд
@@ -311,8 +313,10 @@ sequenceDiagram
 | Сбор стоп-ордеров | P1 IMPORTANT | `*/2` мин | `collect_stop_orders` |
 | Мониторинг позиций | P2 BACKGROUND | `*/3` мин | `monitor_open_positions` |
 
-При старте выполняется `_startup_reconcile()` — закрывает сделки, исполненные пока
-процесс был остановлен.
+При старте выполняется `_startup_reconcile()` — сначала `PendingRecovery` (зависшие
+PENDING), затем сверка стоп-ордеров; закрывает сделки, исполненные пока процесс был
+остановлен. `PendingRecovery` вызывается также в P2 перед сверкой: PENDING-записи без
+`position_id` не видны ни сверке, ни сборщику ордеров (ADR-013).
 
 **ДЕФЕКТ:** комментарии в коде обещают «05:00–00:30» и «каждые 15 минут», фактически
 `hour="5-23,0"` (до 00:59) и `minute="*/3"` (каждые 3 минуты). Источник истины — cron.
@@ -371,6 +375,11 @@ sequenceDiagram
 `create_pending_if_absent()` выполняет `INSERT ... ON CONFLICT (signal_key) WHERE
 signal_key IS NOT NULL DO NOTHING` **до** отправки ордера. `rowcount = 0` означает, что
 сигнал уже обработан (в этом или предыдущем запуске процесса) — ордер не отправляется.
+
+Если процесс упал после вставки PENDING, но до записи OPEN, остаётся сделка без
+`position_id`, невидимая сверке. Её разбирает `PendingRecovery` (ADR-013):
+`get_stale_pending()` → сверка с портфелем и операциями → OPEN, CANCELLED (с
+освобождением ключа) или «нужна ручная проверка» (ключ сохраняется).
 
 Схема: `_ensure_schema()` проверяет наличие колонки и индекса через `information_schema` /
 `pg_indexes` (прав владельца не требует) и вызывает DDL только если объект отсутствует.

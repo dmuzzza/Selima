@@ -342,6 +342,25 @@ class PgLiveTradeRepository:
             """)).mappings().all()
         return [self._row_to_trade(r) for r in rows]
 
+    def get_stale_pending(self, older_than_minutes: int = 30) -> List[LiveTrade]:
+        """
+        Зависшие PENDING-записи: процесс упал между вставкой PENDING и записью OPEN.
+
+        Такие записи не видит ни сборщик ордеров (нужен position_id), ни сверка
+        (идёт от stop_orders), а signal_key остаётся занятым навсегда. Записи
+        моложе `older_than_minutes` не отдаются: их может обрабатывать другой
+        процесс прямо сейчас.
+        """
+        with self.engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT * FROM live_trades
+                WHERE status = 'PENDING'
+                  AND signal_key IS NOT NULL
+                  AND timestamp < NOW() - make_interval(mins => :minutes)
+                ORDER BY timestamp
+            """), {"minutes": older_than_minutes}).mappings().all()
+        return [self._row_to_trade(r) for r in rows]
+
     # ─────────────────────────── Закрытие ───────────────────────────
 
     def close_trade_by_id(self, trade_id: str, exit_type: str, exit_price: float) -> bool:
