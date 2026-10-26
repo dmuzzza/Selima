@@ -44,6 +44,7 @@ T-Invest API:
 
 ```
 p_selima_v8.1/
+├── AGENTS.md                          [D] правила и карта для AI-агентов: маршрут чтения, инварианты
 ├── README.md                          [D] обзор, установка, запуск, env
 ├── pyproject.toml                     [D] зависимости, Python 3.12, ruff/mypy/pytest
 ├── uv.lock                            [D] зафиксированные версии (коммитится)
