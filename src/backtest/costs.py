@@ -16,6 +16,9 @@ Conventions (ADR-016):
 - SL and gap exits are market orders: half spread + slippage against the trader;
 - TP is a limit order: no spread, no slippage. A limit fill happens at the level
   or better, so charging costs there would make wide TP look worse than it is.
+  `tp_penalty_bps` is an optional sensitivity knob (default 0): it fills the TP
+  slightly worse than its level to model a touch without execution. It is not a
+  market cost and is reported as a separate line.
 
 A model with zero spread and zero slippage is marked `GROSS` and not tradable:
 an out-of-sample report or a live candidate must run with non-zero costs.
@@ -30,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from config.commissions import COMMISSION_MODE, TRANSACTION_COMMISSION_PERCENT
+from config import commissions as commissions_config
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +62,9 @@ class CostModel(Protocol):
 
 def _commission_bps_per_side() -> float:
     """Broker commission in bps per side, honouring COMMISSION_MODE=NONE."""
-    if COMMISSION_MODE == "NONE":
+    if commissions_config.COMMISSION_MODE == "NONE":
         return 0.0
-    return TRANSACTION_COMMISSION_PERCENT * 100.0
+    return commissions_config.TRANSACTION_COMMISSION_PERCENT * 100.0
 
 
 def _cost_report(trading_round_trip_bps: float) -> dict:
@@ -74,10 +77,10 @@ def _cost_report(trading_round_trip_bps: float) -> dict:
     cost of a long report.
     """
     commission = _commission_bps_per_side()
-    charged_always = COMMISSION_MODE == "ALL"
+    charged_always = commissions_config.COMMISSION_MODE == "ALL"
     return {
         "trading_round_trip_bps": round(trading_round_trip_bps, 4),
-        "commission_mode": COMMISSION_MODE,
+        "commission_mode": commissions_config.COMMISSION_MODE,
         "commission_bps_per_side": commission,
         "total_round_trip_bps": round(
             trading_round_trip_bps + 2.0 * commission if charged_always else trading_round_trip_bps,
@@ -88,14 +91,24 @@ def _cost_report(trading_round_trip_bps: float) -> dict:
 
 @dataclass(frozen=True)
 class BpsCosts:
-    """Costs quoted in basis points of the traded price."""
+    """Costs quoted in basis points of the traded price.
+
+    `tp_penalty_bps` is not a market cost: it is a sensitivity knob that fills a
+    take profit worse than its level, modelling a limit order that was touched
+    but not executed. Zero by default, so it never changes a baseline.
+    """
 
     spread_bps: float = 0.0
     slippage_bps: float = 0.0
+    tp_penalty_bps: float = 0.0
 
     def _market_offset(self, price: float) -> float:
         """Absolute price deterioration of a market order on one side."""
         return abs(price) * (self.spread_bps / 2.0 + self.slippage_bps) / 10_000.0
+
+    def _tp_offset(self, price: float) -> float:
+        """Absolute shortfall of a take profit that did not fill at its level."""
+        return abs(price) * self.tp_penalty_bps / 10_000.0
 
     def entry_price(self, price: float, is_long: bool) -> float:
         offset = self._market_offset(price)
@@ -103,7 +116,8 @@ class BpsCosts:
 
     def exit_price(self, price: float, is_long: bool, exit_type: str) -> float:
         if exit_type == "TP":
-            return price
+            offset = self._tp_offset(price)
+            return price - offset if is_long else price + offset
         offset = self._market_offset(price)
         return price - offset if is_long else price + offset
 
@@ -121,6 +135,7 @@ class BpsCosts:
             "mode": "bps",
             "spread_bps": self.spread_bps,
             "slippage_bps": self.slippage_bps,
+            "tp_penalty_bps": self.tp_penalty_bps,
             **_cost_report(self.trading_round_trip_bps),
             "tradable": self.is_tradable,
             "label": "NET" if self.is_tradable else "GROSS",
@@ -134,10 +149,15 @@ class TickCosts:
     tick_size: float
     spread_ticks: float = 0.0
     slippage_ticks: float = 0.0
+    tp_penalty_ticks: float = 0.0
 
     def _market_offset(self) -> float:
         """Absolute price deterioration of a market order on one side."""
         return self.tick_size * (self.spread_ticks / 2.0 + self.slippage_ticks)
+
+    def _tp_offset(self) -> float:
+        """Absolute shortfall of a take profit that did not fill at its level."""
+        return self.tick_size * self.tp_penalty_ticks
 
     def entry_price(self, price: float, is_long: bool) -> float:
         offset = self._market_offset()
@@ -145,7 +165,8 @@ class TickCosts:
 
     def exit_price(self, price: float, is_long: bool, exit_type: str) -> float:
         if exit_type == "TP":
-            return price
+            offset = self._tp_offset()
+            return price - offset if is_long else price + offset
         offset = self._market_offset()
         return price - offset if is_long else price + offset
 
@@ -159,10 +180,11 @@ class TickCosts:
             "tick_size": self.tick_size,
             "spread_ticks": self.spread_ticks,
             "slippage_ticks": self.slippage_ticks,
+            "tp_penalty_ticks": self.tp_penalty_ticks,
             "market_offset_per_side": round(self._market_offset(), 6),
             # Ticks cannot be converted to bps without a price, so the
             # commission is reported as a separate line only.
-            "commission_mode": COMMISSION_MODE,
+            "commission_mode": commissions_config.COMMISSION_MODE,
             "commission_bps_per_side": _commission_bps_per_side(),
             "tradable": self.is_tradable,
             "label": "NET" if self.is_tradable else "GROSS",
@@ -183,20 +205,25 @@ def build_costs(spec: dict) -> CostModel:
     if mode == "bps":
         spread = float(spec.get("spread_bps", 0.0))
         slippage = float(spec.get("slippage_bps", 0.0))
-        if spread < 0 or slippage < 0:
+        tp_penalty = float(spec.get("tp_penalty_bps", 0.0))
+        if spread < 0 or slippage < 0 or tp_penalty < 0:
             raise ValueError("costs must be non-negative")
-        return BpsCosts(spread_bps=spread, slippage_bps=slippage)
+        return BpsCosts(spread_bps=spread, slippage_bps=slippage, tp_penalty_bps=tp_penalty)
 
     if mode == "ticks":
         tick_size = float(spec.get("tick_size", 0.0))
         spread = float(spec.get("spread_ticks", 0.0))
         slippage = float(spec.get("slippage_ticks", 0.0))
+        tp_penalty = float(spec.get("tp_penalty_ticks", 0.0))
         if tick_size <= 0:
             raise ValueError("tick_size must be positive for mode='ticks'")
-        if spread < 0 or slippage < 0:
+        if spread < 0 or slippage < 0 or tp_penalty < 0:
             raise ValueError("costs must be non-negative")
         return TickCosts(
-            tick_size=tick_size, spread_ticks=spread, slippage_ticks=slippage
+            tick_size=tick_size,
+            spread_ticks=spread,
+            slippage_ticks=slippage,
+            tp_penalty_ticks=tp_penalty,
         )
 
     raise ValueError(f"unknown cost mode: {mode}")

@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +39,7 @@ from src.backtest.costs import (  # noqa: E402
     BpsCosts,
     CostConfig,
     CostModel,
+    TickCosts,
     load_costs,
 )
 from src.market_data.history_manager import HistoryManager  # noqa: E402
@@ -61,6 +63,7 @@ def trade_fingerprint(trade: Trade) -> str:
             trade.exit_type or "-",
             repr(trade.exit_price),
             repr(trade.pnl_abs),
+            trade.exit_reason or "-",
         ]
     )
 
@@ -85,6 +88,7 @@ def run_single(
     timeframe: str,
     include_trades: bool,
     costs: CostModel = ZERO_COSTS,
+    levels_from_fill: bool = False,
 ) -> dict:
     """Run one strategy/instrument/timeframe combination."""
     candles = history.get_candles(figi, Timeframe(timeframe))
@@ -100,7 +104,13 @@ def run_single(
         return entry
 
     strategy = StrategyFactory.create(
-        strategy_code, timeframe, config={"ticker": ticker, "costs": costs}
+        strategy_code,
+        timeframe,
+        config={
+            "ticker": ticker,
+            "costs": costs,
+            "levels_from_fill": levels_from_fill,
+        },
     )
     result = strategy.run(candles)
     trades: list[Trade] = result["trades"]
@@ -114,10 +124,16 @@ def run_single(
         {
             "status": "ok",
             "costs": costs.describe(),
+            "levels_from_fill": levels_from_fill,
             "signals": len(result["signals"]),
             "trades": len(trades),
             "closed": len(closed),
             "total_pnl": stats.total_pnl,
+            # Three PnL layers (ADR-017): price -> market costs -> net.
+            "pnl_price": sum(t.pnl_price or 0.0 for t in closed),
+            "pnl_after_market_costs": sum(t.pnl_after_market_costs or 0.0 for t in closed),
+            "market_cost": sum(t.market_cost or 0.0 for t in closed),
+            "commission": sum(t.commission_total for t in closed),
             "win_rate": stats.win_rate,
             "final_balance": stats.final_balance,
             "trades_sha256": digest,
@@ -126,6 +142,18 @@ def run_single(
     if include_trades:
         entry["trade_list"] = fingerprints
     return entry
+
+
+def _with_tp_penalty(model: CostModel, penalty_bps: float) -> CostModel:
+    """Apply the TP sensitivity knob on top of a per-instrument model."""
+    if not penalty_bps:
+        return model
+    if isinstance(model, BpsCosts):
+        return replace(model, tp_penalty_bps=penalty_bps)
+    if isinstance(model, TickCosts):
+        # One tick is the smallest unit: a bps penalty has no exact tick form.
+        return replace(model, tp_penalty_ticks=1.0)
+    return model
 
 
 def build_costs(
@@ -140,10 +168,11 @@ def build_costs(
     - `global_model` is set when flat `--spread-bps/--slippage-bps` are given;
     - with neither, the run is gross, which the report states explicitly.
     """
-    if args.spread_bps is not None or args.slippage_bps is not None:
+    if args.spread_bps is not None or args.slippage_bps is not None or args.tp_penalty_bps:
         model = BpsCosts(
             spread_bps=args.spread_bps or 0.0,
             slippage_bps=args.slippage_bps or 0.0,
+            tp_penalty_bps=args.tp_penalty_bps or 0.0,
         )
         return None, model, {**model.describe(), "source": "cli"}
 
@@ -188,7 +217,9 @@ def collect(args: argparse.Namespace) -> dict:
             if global_costs is not None:
                 costs = global_costs
             elif costs_config is not None:
-                costs = costs_config.for_ticker(instrument["ticker"])
+                costs = _with_tp_penalty(
+                    costs_config.for_ticker(instrument["ticker"]), args.tp_penalty_bps
+                )
             else:
                 costs = ZERO_COSTS
             logger.info("Run: %s %s %s", instrument["ticker"], instrument["figi"], timeframe)
@@ -201,6 +232,7 @@ def collect(args: argparse.Namespace) -> dict:
                     timeframe=timeframe,
                     include_trades=args.full,
                     costs=costs,
+                    levels_from_fill=args.levels_from_fill,
                 )
             )
 
@@ -292,6 +324,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--costs-file",
         default=None,
         help="use per-instrument costs from this file instead of flat values",
+    )
+    parser.add_argument(
+        "--tp-penalty-bps",
+        type=float,
+        default=0.0,
+        help="sensitivity: fill TP this many bps worse than its level (default: 0)",
+    )
+    parser.add_argument(
+        "--levels-from-fill",
+        action="store_true",
+        help="sensitivity: build TP/SL from the paid entry price, as live does",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args(argv)

@@ -40,6 +40,37 @@ def test_take_profit_is_a_limit_order_and_pays_nothing():
     assert costs.exit_price(100.0, is_long=False, exit_type="TP") == 100.0
 
 
+def test_tp_penalty_fills_take_profit_worse_than_its_level():
+    """Sensitivity knob: a TP that was touched but not executed."""
+    costs = BpsCosts(spread_bps=2.0, slippage_bps=3.0, tp_penalty_bps=4.0)
+
+    assert costs.exit_price(100.0, is_long=True, exit_type="TP") == pytest.approx(99.96)
+    assert costs.exit_price(100.0, is_long=False, exit_type="TP") == pytest.approx(100.04)
+    # Market exits are unaffected by the TP knob.
+    assert costs.exit_price(100.0, is_long=True, exit_type="SL") == pytest.approx(99.96)
+
+
+def test_tp_penalty_does_not_make_a_gross_model_tradable():
+    """The knob models an execution shortfall, it is not a market cost."""
+    described = BpsCosts(tp_penalty_bps=5.0).describe()
+
+    assert described["tp_penalty_bps"] == 5.0
+    assert described["tradable"] is False
+    assert described["label"] == "GROSS"
+
+
+def test_build_costs_reads_tp_penalty():
+    model = build_costs({"mode": "bps", "spread_bps": 1.0, "tp_penalty_bps": 3.0})
+
+    assert isinstance(model, BpsCosts)
+    assert model.tp_penalty_bps == 3.0
+
+
+def test_negative_tp_penalty_is_rejected():
+    with pytest.raises(ValueError, match="non-negative"):
+        build_costs({"mode": "bps", "tp_penalty_bps": -1.0})
+
+
 def test_gap_exit_pays_market_costs():
     costs = BpsCosts(spread_bps=2.0, slippage_bps=3.0)
 
@@ -210,3 +241,28 @@ def test_repository_costs_config_is_valid():
     assert config.for_ticker("CRU6").describe()["mode"] == "ticks"
     # The shipped default must not be zero, otherwise every report is GROSS.
     assert config.for_ticker("UNKNOWN").is_tradable is True
+
+
+# ── commission mode (gross runs must be really gross) ──────────────────────
+
+
+def test_commission_mode_is_read_from_env(monkeypatch):
+    from config import commissions
+
+    monkeypatch.setenv("COMMISSION_MODE", "none")
+    assert commissions._read_commission_mode() == "NONE"
+
+    monkeypatch.setenv("COMMISSION_MODE", "bogus")
+    with pytest.raises(ValueError, match="COMMISSION_MODE"):
+        commissions._read_commission_mode()
+
+
+def test_commission_mode_none_removes_commission_from_the_report(monkeypatch):
+    from config import commissions
+
+    monkeypatch.setattr(commissions, "COMMISSION_MODE", "NONE")
+    described = BpsCosts(spread_bps=2.0, slippage_bps=3.0).describe()
+
+    assert described["commission_mode"] == "NONE"
+    assert described["commission_bps_per_side"] == 0.0
+    assert described["total_round_trip_bps"] == pytest.approx(8.0)

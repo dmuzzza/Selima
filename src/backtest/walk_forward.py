@@ -200,6 +200,9 @@ class WalkForwardResult:
             "in_sample_pnl": round(self.in_sample_pnl, 2),
             "oos_pnl": round(self.oos_pnl, 2),
             "oos_trades": len(self.oos_trades),
+            # Per-trade OOS PnL: the only way to put a confidence interval on
+            # the out-of-sample expectancy without re-running the backtest.
+            "oos_trade_pnl": [round(t.pnl_abs or 0.0, 2) for t in self.oos_trades],
             "oos_win_rate": round(self.oos_win_rate, 2),
             "profitable_windows": self.profitable_windows,
             "degradation_percent": (

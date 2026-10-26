@@ -110,6 +110,7 @@ p_selima_v8.1/
 | `BROKER_TYPE` | `sdk` (по умолчанию) | нет |
 | `TRADING_MODE` | `dry_run` (по умолчанию) или `live` | нет |
 | `LIVE_CONFIRM` | `yes` — обязательное подтверждение для `TRADING_MODE=live` | для live |
+| `COMMISSION_MODE` | `ALL` / `LONG_ONLY` / `SHORT_ONLY` (по умолчанию) / `NONE` — комиссия в бэктесте и отчётах. `NONE` делает GROSS-прогон действительно gross | нет |
 | `TEST_MODE` | `true` — фиктивные сигналы вместо рыночных | нет |
 | `PG_HOST`, `PG_USER`, `PG_PASSWORD`, `PG_DBNAME` | подключение к PostgreSQL с рыночными данными | да |
 | `ACCOUNT_ID_DUAL_MA_LONG` | счёт для LONG-сделок | да |
@@ -130,6 +131,9 @@ p_selima_v8.1/
 | Baseline PnL бэктеста (до/после правок движка) | `uv run python scripts/pnl_baseline.py --tag before` |
 | Walk-forward (OOS-оценка TP/SL) | `uv run python scripts/walk_forward.py --tag before` |
 | Бэктест с издержками | `uv run python scripts/walk_forward.py --costs-file config/costs.json --tag net` |
+| Разложение издержек по двум снапшотам | `uv run python scripts/cost_audit.py debug/baseline_pnl_a.json debug/baseline_pnl_b.json` |
+| Bootstrap-CI для OOS-expectancy | `uv run python scripts/cost_audit.py --oos debug/walk_forward_net.json` |
+| Чувствительность: издержки ×2 / TP-штраф / уровни от цены исполнения | `--spread-bps 4 --slippage-bps 6`, `--tp-penalty-bps 4`, `--levels-from-fill` |
 | Тесты | `uv run pytest` |
 | Линтер / типы | `uv run ruff check .` / `uv run mypy src` |
 

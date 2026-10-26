@@ -139,8 +139,10 @@ p_selima_v8.1/
 │   ├── analytics/strategy_analyzer.py [C] метрики, интерпретация, отчёт по результату стратегии
 │   ├── backtest/
 │   │   ├── simulator.py               [C] TradeSimulator, ExitRules, SizingRules — единый цикл TP/SL
-│   │   │                                  (SL-first, гэпы по open, exit_time = конец бара, ADR-012)
-│   │   ├── costs.py                   [C] CostModel: спред (½ на сторону), проскальзывание, метки GROSS/NET (ADR-016)
+│   │   │                                  (SL-first, гэпы по open, exit_time = конец бара,
+│   │   │                                   уровни от сырого open, ADR-012/ADR-017)
+│   │   ├── costs.py                   [C] CostModel: спред (½ на сторону), проскальзывание,
+│   │   │                                  tp_penalty (чувствительность), метки GROSS/NET (ADR-016)
 │   │   ├── walk_forward.py            [C] окна train/test, отбор параметров на train, OOS-прогон (ADR-015)
 │   │   └── backtester.py              [L] отдельный движок бэктеста (не используется стратегиями)
 │   ├── storage/models.py              [L] устаревшая ORM-модель "marketdata"
@@ -170,7 +172,9 @@ p_selima_v8.1/
 │                                          stop_orders, constraint; PostgreSQL: add_signal_key)
 ├── scripts/                           [T] экспорт сделок/свечей, отчёт, top10 по объёму,
 │                                          таблица FIGI, проверка constraint,
-│                                          pnl_baseline.py (baseline PnL до/после правок движка)
+│                                          pnl_baseline.py (baseline PnL до/после правок движка),
+│                                          walk_forward.py (OOS-оценка TP/SL),
+│                                          cost_audit.py (разложение Δ PnL по слоям, bootstrap-CI)
 ├── optimization/                      [T] grid_tp_sl_dual_ma.py, optimize_macd_plus.py,
 │                                          _check_db.py, tz_ml_optimization.md (ТЗ на ML)
 ├── debug/                             [T] debug_margin.py, debug_instrument.py
@@ -308,6 +312,16 @@ sequenceDiagram
 | свеча открылась за уровнем SL | выход по `open` (хуже уровня) |
 | свеча открылась за уровнем TP | выход по `open` (лучше уровня) |
 | время выхода | конец бара (`open_time + bar_duration`) |
+
+Уровни TP/SL строятся от **сырого** `candle.open`; издержки меняют только цену
+исполнения, поэтому набор сделок не зависит от модели издержек (ADR-017). Флаг
+`levels_from_fill=True` повторяет live-конвенцию (уровни от факта исполнения) и
+используется только для чувствительности. `Trade.exit_reason` различает `TP`, `SL`,
+`GAP` и `TIME` (позиция открыта на конец периода), `exit_type` — тип заявки.
+
+PnL считается тремя слоями: `pnl_price` (сырые цены) → `pnl_after_market_costs`
+(спред и проскальзывание) → `pnl_net` (минус комиссия и маржа). `COMMISSION_MODE`
+читается из окружения: `NONE` делает GROSS-прогон действительно gross.
 
 Используются разные модели: `Trade` (симуляция) и `LiveTrade` (реальная торговля),
 см. `docs/STRATEGY_CONTRACT.md`.
@@ -485,12 +499,20 @@ PostgreSQL). Оставлен для legacy-скриптов и локальны
     `entry_filter()`, который вызывается на свече исполнения — той же, что видит
     бэктест. Остаточное расхождение: live не знает `open` следующей свечи на момент
     сигнала, поэтому `check_last_signal()` фильтр не применяет (T3-4, `EntryPolicy`).
+10b. ~~`TradeSimulator._try_entry` строил TP/SL от `entry_price` с издержками, поэтому
+    включение спреда/проскальзывания меняло уровни, набор сделок (52 → 53) и «−39%» PnL.
+    Метка GROSS при этом не была gross: комиссия и маржа вычитались всегда.~~
+    **Исправлено (T2-7a, ADR-017):** уровни от сырого `open`, три слоя PnL, `exit_reason`,
+    `COMMISSION_MODE` из env, `scripts/cost_audit.py`. Чистые издержки SBER 4h — −8.8%;
+    OOS-expectancy bootstrap-CI включает ноль (54 сделки).
 11. `config/commissions.py:41` — `COMMISSION_MODE = "SHORT_ONLY"` глобально; бэктест
     LONG не учитывает комиссии, сравнение стратегий некорректно.
     **Частично закрыто (T2-7, ADR-016):** спред и проскальзывание теперь учитываются
     (`src/backtest/costs.py`), а отчёт показывает комиссию отдельной строкой и помечает
-    нулевую модель как GROSS. Глобальный `COMMISSION_MODE` остаётся: перевести его в
-    конфиг стратегии — отдельная задача.
+    нулевую модель как GROSS. **T2-7a (ADR-017):** режим читается из `COMMISSION_MODE`
+    (env), `NONE` отключает комиссию полностью; три слоя PnL разделяют цену, издержки
+    рынка и комиссию. Глобальный режим по умолчанию (`SHORT_ONLY`) остаётся: перевести
+    его в конфиг стратегии — отдельная задача.
 12. `config/trading_config.py:13` — `max_positions_per_account = 6`, а
     `docs/PROJECT_DOCUMENTATION.md` и docstring `orchestrator` говорят про 3.
 13. Смешаны naive и aware datetime: API отдаёт UTC, `HistoryManager` конвертирует в MSK

@@ -348,8 +348,8 @@ def test_exit_rules_levels():
 # ── transaction costs (ADR-016) ────────────────────────────────────────────
 
 
-def test_costs_worsen_market_entry_and_levels_follow_it():
-    """Levels are built from the paid entry price, not from the candle open."""
+def test_costs_worsen_entry_but_levels_stay_on_raw_open():
+    """Levels are built from the raw open; costs only move the fill (ADR-017)."""
     candles = make_candles([
         (100.0, 100.0, 100.0, 100.0),
         (100.0, 101.0, 99.0, 100.0),
@@ -359,8 +359,77 @@ def test_costs_worsen_market_entry_and_levels_follow_it():
 
     # 100 * (2/2 + 3) / 10000 = 0.04
     assert trades[0].entry_price == pytest.approx(100.04)
+    # Levels are identical to the zero-cost run: 100 * 1.10 and 100 * 0.95
+    assert trades[0].tp_level == pytest.approx(110.0)
+    assert trades[0].sl_level == pytest.approx(95.0)
+
+
+def test_cost_model_does_not_change_the_trade_set():
+    """Same signals, same exits: costs move rubles, never entries or exit bars."""
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 101.0, 99.0, 100.0),   # entry 1
+        (100.5, 111.0, 99.0, 110.0),   # TP 110 is touched
+        (110.0, 110.5, 109.0, 110.0),  # signal 2
+        (110.0, 110.5, 109.0, 110.0),  # entry 2
+        (110.0, 112.0, 100.0, 101.0),  # SL 104.5 is touched
+        (101.0, 101.5, 100.5, 101.0),  # signal 3
+        (101.0, 101.5, 100.5, 101.0),  # entry 3 stays open
+    ])
+    signals = [signal(0), signal(3), signal(6)]
+
+    without = run(candles, signals, tp=10.0, sl=5.0)
+    with_costs = run(candles, signals, tp=10.0, sl=5.0, costs=BpsCosts(10.0, 20.0))
+
+    def shape(trades):
+        return [(t.entry_index, t.exit_index, t.exit_type, t.exit_reason) for t in trades]
+
+    assert shape(without) == shape(with_costs)
+    assert [t.pnl_abs for t in without] != [t.pnl_abs for t in with_costs]
+
+
+def test_levels_from_fill_reproduces_the_live_convention():
+    """Sensitivity switch: levels move with the fill, so the trade set may change."""
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 101.0, 99.0, 100.0),
+    ])
+    costs = BpsCosts(spread_bps=2.0, slippage_bps=3.0)
+    simulator = TradeSimulator(
+        exit_rules=ExitRules(tp_percent=10.0, sl_percent=5.0),
+        sizing=SizingRules(initial_balance=1000.0, position_size_percent=100.0),
+        on_close=simple_pnl,
+        costs=costs,
+        levels_from_fill=True,
+    )
+    trades = simulator.run(candles, [signal(0)])
+
+    assert trades[0].entry_price == pytest.approx(100.04)
     assert trades[0].tp_level == pytest.approx(110.044)
     assert trades[0].sl_level == pytest.approx(95.038)
+
+
+def test_exit_reason_separates_gap_from_intrabar_exit():
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 100.5, 99.5, 100.0),
+        (90.0, 92.0, 88.0, 91.0),  # opens below SL 95: gap
+    ])
+    trades = run(candles, [signal(0)], tp=10.0, sl=5.0)
+
+    assert trades[0].exit_type == "SL"
+    assert trades[0].exit_reason == "GAP"
+
+
+def test_exit_reason_marks_position_open_at_the_end():
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 100.5, 99.5, 100.0),
+    ])
+    trades = run(candles, [signal(0)], tp=50.0, sl=50.0)
+
+    assert trades[0].is_open()
+    assert trades[0].exit_reason == "TIME"
 
 
 def test_costs_worsen_stop_loss_fill():

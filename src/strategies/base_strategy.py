@@ -28,8 +28,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import ClassVar, Dict, List, Optional
+
+from config import commissions as commissions_config
 from config.commissions import (
-    COMMISSION_MODE,
     TRANSACTION_COMMISSION_PERCENT,
     calculate_daily_margin_fee,
 )
@@ -75,7 +76,13 @@ class Trade:
     exit_time: Optional[datetime] = None
     exit_index: Optional[int] = None
     exit_price: Optional[float] = None
-    exit_type: Optional[str] = None  # "TP" | "SL"
+    exit_type: Optional[str] = None  # "TP" | "SL" (order type: limit | market)
+    exit_reason: str | None = None  # "TP" | "SL" | "GAP" | "TIME"
+
+    # Сырые цены без издержек рынка: нужны, чтобы отделить PnL цены
+    # от спреда/проскальзывания (ADR-017)
+    raw_entry_price: float | None = None
+    raw_exit_price: float | None = None
 
     # Безубыток
     breakeven_triggered: bool = False
@@ -98,8 +105,12 @@ class Trade:
     commission_total: float = 0.0     # Итого комиссий
     
     # PnL до и после комиссий
-    pnl_gross: Optional[float] = None   # PnL до комиссий
+    pnl_gross: Optional[float] = None   # PnL по ценам исполнения, до комиссий
     pnl_net: Optional[float] = None     # PnL после комиссий
+    # Три слоя PnL (ADR-017): цена -> издержки рынка -> комиссия
+    pnl_price: float | None = None              # по сырым ценам, без издержек
+    pnl_after_market_costs: float | None = None  # после спреда/проскальзывания
+    market_cost: float | None = None             # pnl_after_market_costs - pnl_price
 
     # Название паттерна (для candle_patterns и др. стратегий)
     pattern_name: Optional[str] = None
@@ -302,6 +313,8 @@ class BaseStrategy(ABC):
             entry_filter=self.entry_filter,
             allow_short=self.allow_short,
             bar_duration=self._bar_duration(),
+            # Sensitivity only: TP/SL from the paid price instead of the raw open.
+            levels_from_fill=self.config.get("levels_from_fill", False),
             # Cost model is injected by the caller (scripts, walk-forward):
             # strategies must not read files or guess spreads (ADR-016).
             costs=self.config.get("costs"),
@@ -617,22 +630,23 @@ class BaseStrategy(ABC):
         Args:
             trade: Торговая сделка
         """
+        commission_mode = commissions_config.COMMISSION_MODE
         # Проверка режима комиссий
-        if COMMISSION_MODE == "NONE":
+        if commission_mode == "NONE":
             trade.commission_open = 0.0
             trade.commission_close = 0.0
             trade.commission_margin = 0.0
             trade.commission_total = 0.0
             return
 
-        if COMMISSION_MODE == "LONG_ONLY" and trade.is_short():
+        if commission_mode == "LONG_ONLY" and trade.is_short():
             trade.commission_open = 0.0
             trade.commission_close = 0.0
             trade.commission_margin = 0.0
             trade.commission_total = 0.0
             return
 
-        if COMMISSION_MODE == "SHORT_ONLY" and trade.is_long():
+        if commission_mode == "SHORT_ONLY" and trade.is_long():
             trade.commission_open = 0.0
             trade.commission_close = 0.0
             trade.commission_margin = 0.0
@@ -670,32 +684,42 @@ class BaseStrategy(ABC):
     def _calculate_pnl(self, trade: Trade, current_balance: float) -> None:
         """
         Рассчитать PnL для закрытой позиции (универсальный метод).
-        
+
+        Три слоя (ADR-017), чтобы отчёт нельзя было смешать:
+            pnl_price              — по сырым ценам, без издержек и комиссий;
+            pnl_after_market_costs — по ценам исполнения (спред + проскальзывание);
+            pnl_net                — минус транзакционная и маржинальная комиссия.
+
         Args:
             trade: Торговая сделка
             current_balance: Баланс на момент входа (размер позиции)
         """
         if trade.exit_price is None:
             return
-        
+
         self._calculate_commissions(trade)
 
-        # PnL до комиссий (Gross)
-        if trade.is_long():
-            quantity = trade.quantity / trade.entry_price
-            pnl_gross = quantity * (trade.exit_price - trade.entry_price)
-        else:  # SHORT
-            quantity = trade.quantity / trade.entry_price
-            pnl_gross = quantity * (trade.entry_price - trade.exit_price)
+        direction = 1.0 if trade.is_long() else -1.0
+        quantity = trade.quantity / trade.entry_price
+
+        # PnL по ценам исполнения (спред/проскальзывание уже в них)
+        pnl_gross = quantity * (trade.exit_price - trade.entry_price) * direction
+
+        # PnL по сырым ценам: та же позиция, но без издержек рынка
+        raw_entry = trade.raw_entry_price if trade.raw_entry_price is not None else trade.entry_price
+        raw_exit = trade.raw_exit_price if trade.raw_exit_price is not None else trade.exit_price
+        pnl_price = trade.quantity / raw_entry * (raw_exit - raw_entry) * direction
 
         # PnL после комиссий (Net)
         pnl_net = pnl_gross - trade.commission_total
 
         # Проценты
-        pnl_percent_gross = (pnl_gross / trade.quantity) * 100
         pnl_percent_net = (pnl_net / trade.quantity) * 100
 
         # Сохраняем
+        trade.pnl_price = pnl_price
+        trade.pnl_after_market_costs = pnl_gross
+        trade.market_cost = pnl_gross - pnl_price
         trade.pnl_gross = pnl_gross
         trade.pnl_net = pnl_net
         trade.pnl_percent = pnl_percent_net  # ✅ Используем net для метрик

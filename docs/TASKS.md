@@ -91,6 +91,7 @@ ImportError; в логах нет токенов и `account_id`.
 | T2-5 | **Идемпотентность live-торговли**: проверка «сигнал уже обработан» по `(figi, timeframe, candle_open_time, direction)`, а не только по открытой позиции | P0 | M | done |
 | T2-6 | **Защита от двойного открытия** при рестарте: блокировка/ключ в БД перед `post_market_order` | P0 | M | done (PENDING-запись с `signal_key` создаётся до отправки ордера; зависшие PENDING разбирает `PendingRecovery`, ADR-013) |
 | T2-7 | **Модель издержек**: проскальзывание, гэпы, спред, реальные тарифы брокера (сейчас только 0.05% + маржа) | P1 | M | done (спред ½ на сторону + проскальзывание, `TickCosts` для фьючерсов, метки GROSS/NET; ADR-016) |
+| T2-7a | **Аудит издержек и исправление уровней**: уровни TP/SL от сырого `open`, три слоя PnL, реальный gross (`COMMISSION_MODE` из env), `exit_reason`, `scripts/cost_audit.py`, `tp_penalty`, bootstrap-CI | P0 (доверие к цифрам) | M | done (ADR-017; SBER 4h: чистые издержки −8.8%, а не −39%; OOS-CI включает ноль) |
 | T2-8 | **Walk-forward и out-of-sample** вместо подбора TP/SL на всей истории (сейчас `optimization/grid_tp_sl_dual_ma.py` подбирает на тех же данных) | P0 (риск переобучения) | L | done (`src/backtest/walk_forward.py` + `scripts/walk_forward.py`, ADR-015) |
 | T2-9 | **Метрики риска**: Sortino, Calmar, VaR, средняя просадка, распределение R-multiple | P2 | M | todo |
 | T2-10 | **Наблюдаемость**: структурные JSON-логи, метрики (открытые позиции, ошибки API, лаг данных), healthcheck-endpoint | P1 | M | todo |
@@ -150,7 +151,7 @@ PnL по шагам: 327 803.20 → 291 905.42 (SL-first) → 292 815.68 (гэп
 
 | ID | Задача | Приоритет | Статус |
 |---|---|---|---|
-| T5-1 | `tests/` + pytest: `BaseStrategy.calculate_stats`, `TradeSimulator`, `PositionManager` (моки), стратегии на синтетике | P0 | in-progress (52 теста: контракт стратегий, `TradeSimulator` включая модель исполнения, режим торговли, `signal_key`, `PendingRecovery`, `allow_short`) |
+| T5-1 | `tests/` + pytest: `BaseStrategy.calculate_stats`, `TradeSimulator`, `PositionManager` (моки), стратегии на синтетике | P0 | in-progress (116 тестов: контракт стратегий, `TradeSimulator` включая модель исполнения и инвариант набора сделок, режим торговли, `signal_key`, `PendingRecovery`, `allow_short`, издержки, `tp_penalty`, `exit_reason`) |
 | T5-2 | GitHub Actions: ruff + mypy + pytest | P1 | done (`.github/workflows/ci.yml`, см. T2-14) |
 | T5-3 | Dockerfile (multi-stage, `python:3.12-slim`, non-root, healthcheck) | P1 | todo |
 | T5-4 | docker-compose: app + postgres для локальной разработки | P1 | todo |

@@ -17,7 +17,11 @@ addressed separately (T3-5):
 - intrabar slippage is not modelled; spread and slippage are a flat per-side
   cost applied to the fill price (`src/backtest/costs.py`, ADR-016), so a
   limit TP fills exactly at its level and a market exit pays half spread plus
-  slippage.
+  slippage;
+- TP/SL levels are built from the **raw** candle open, not from the cost-adjusted
+  fill. Costs therefore never change *which* trades happen or when they exit:
+  the same signal set produces the same trade set with and without costs, only
+  the rubles differ. This keeps a cost model auditable (ADR-017).
 """
 
 from collections.abc import Callable
@@ -77,6 +81,7 @@ class TradeSimulator:
         allow_short: bool = True,
         bar_duration: timedelta | None = None,
         costs: CostModel | None = None,
+        levels_from_fill: bool = False,
         logger=None,
         debug: bool = False,
     ) -> None:
@@ -91,6 +96,10 @@ class TradeSimulator:
         # Spread and slippage applied to execution prices only, never to the
         # TP/SL levels themselves (ADR-016).
         self.costs: CostModel = costs if costs is not None else ZERO_COSTS
+        # Sensitivity only: build TP/SL from the cost-adjusted fill, the way a
+        # live account does after the order is executed. Off by default, because
+        # it makes the trade set depend on the cost model (ADR-017).
+        self.levels_from_fill = levels_from_fill
         self.logger = logger
         self.debug = debug
 
@@ -115,6 +124,9 @@ class TradeSimulator:
 
         # Position still open at the end of the period
         if current is not None:
+            # Not an exit: the trade is reported open, but the reason tells an
+            # audit that the period, not TP/SL, ended it.
+            current.exit_reason = "TIME"
             trades.append(current)
 
         return trades
@@ -125,14 +137,16 @@ class TradeSimulator:
         if exit is None:
             return False
 
-        exit_type, raw_price = exit
+        exit_type, exit_reason, raw_price = exit
         # Costs are applied to the fill, not to the level: the level decides
         # *whether* the trade closes, the cost model decides at what price.
         fill_price = self.costs.exit_price(raw_price, trade.is_long(), exit_type)
         trade.exit_time = self._exit_time(candle)
         trade.exit_index = candle_idx
+        trade.raw_exit_price = raw_price
         trade.exit_price = fill_price
         trade.exit_type = exit_type
+        trade.exit_reason = exit_reason
         self.on_close(trade, balance)
 
         if self.debug and self.logger:
@@ -149,8 +163,12 @@ class TradeSimulator:
             return candle.open_time
         return candle.open_time + self.bar_duration
 
-    def _detect_exit(self, trade: Trade, candle: Candle) -> tuple[str, float] | None:
-        """Return (exit_type, exit_price) if the candle closed the trade.
+    def _detect_exit(self, trade: Trade, candle: Candle) -> tuple[str, str, float] | None:
+        """Return (exit_type, exit_reason, exit_price) if the candle closed the trade.
+
+        `exit_type` is `TP` or `SL` and decides the order type (limit vs market).
+        `exit_reason` adds the *how*: `GAP` when the candle opened beyond the
+        level, otherwise it repeats `exit_type`.
 
         Two cases are distinguished:
 
@@ -165,14 +183,14 @@ class TradeSimulator:
         # 1. Gap at the candle open
         if is_long:
             if candle.open <= trade.sl_level:
-                return "SL", candle.open
+                return "SL", "GAP", candle.open
             if candle.open >= trade.tp_level:
-                return "TP", candle.open
+                return "TP", "GAP", candle.open
         else:
             if candle.open >= trade.sl_level:
-                return "SL", candle.open
+                return "SL", "GAP", candle.open
             if candle.open <= trade.tp_level:
-                return "TP", candle.open
+                return "TP", "GAP", candle.open
 
         # 2. Intrabar touch
         if is_long:
@@ -183,9 +201,9 @@ class TradeSimulator:
             hit_sl = candle.high >= trade.sl_level
 
         if hit_sl:
-            return "SL", trade.sl_level
+            return "SL", "SL", trade.sl_level
         if hit_tp:
-            return "TP", trade.tp_level
+            return "TP", "TP", trade.tp_level
         return None
 
     def _try_entry(
@@ -209,7 +227,11 @@ class TradeSimulator:
             # Entry is a market order: half spread + slippage against the trader.
             entry_price = self.costs.entry_price(candle.open, is_long)
             position_size = self.sizing.position_size(balance)
-            tp_level, sl_level = self.exit_rules.levels(entry_price, is_long=is_long)
+            # Levels come from the raw open, so the cost model cannot move them
+            # and the trade set stays identical across cost scenarios (ADR-017).
+            # `levels_from_fill` switches to the live convention for sensitivity.
+            levels_base = entry_price if self.levels_from_fill else candle.open
+            tp_level, sl_level = self.exit_rules.levels(levels_base, is_long=is_long)
 
             trade = Trade(
                 trade_id=trade_id,
@@ -220,6 +242,7 @@ class TradeSimulator:
                 tp_level=tp_level,
                 sl_level=sl_level,
                 quantity=position_size,
+                raw_entry_price=candle.open,
             )
 
             if self.debug and self.logger:

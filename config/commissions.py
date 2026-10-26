@@ -14,6 +14,7 @@
 """
 
 from dataclasses import dataclass
+from os import getenv
 from typing import List
 
 
@@ -37,8 +38,24 @@ TRANSACTION_COMMISSION_PERCENT = 0.05  # 0.05% от суммы сделки
 # РЕЖИМ ПРИМЕНЕНИЯ КОМИССИЙ
 # ═══════════════════════════════════════════════════════════════════════════
 
-# "ALL" | "LONG_ONLY" | "SHORT_ONLY" | "NONE"
-COMMISSION_MODE = "SHORT_ONLY"
+COMMISSION_MODES = ("ALL", "LONG_ONLY", "SHORT_ONLY", "NONE")
+
+
+def _read_commission_mode() -> str:
+    """Commission mode from the environment; `SHORT_ONLY` is the legacy default.
+
+    A gross run must be really gross, so the mode is switchable without touching
+    the code: `COMMISSION_MODE=NONE` disables both transaction and margin fees.
+    """
+    raw = getenv("COMMISSION_MODE", "SHORT_ONLY").strip().upper()
+    if raw not in COMMISSION_MODES:
+        raise ValueError(
+            f"COMMISSION_MODE must be one of {', '.join(COMMISSION_MODES)}, got {raw!r}"
+        )
+    return raw
+
+
+COMMISSION_MODE = _read_commission_mode()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
