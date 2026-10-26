@@ -128,6 +128,7 @@ p_selima_v8.1/
 | Загрузка истории | `uv run python reload_data_v2.py` |
 | Миграция БД (signal_key) | `uv run python migrations/migrate_add_signal_key.py` |
 | Baseline PnL бэктеста (до/после правок движка) | `uv run python scripts/pnl_baseline.py --tag before` |
+| Walk-forward (OOS-оценка TP/SL) | `uv run python scripts/walk_forward.py --tag before` |
 | Тесты | `uv run pytest` |
 | Линтер / типы | `uv run ruff check .` / `uv run mypy src` |
 
@@ -144,8 +145,9 @@ p_selima_v8.1/
 | Тесты | `pytest -q` | все |
 
 `CLEAN_SET` — список файлов/каталогов без legacy-долга (T1-7): сейчас
-`src/backtest/simulator.py`, `src/trading/pending_recovery.py`, `tests`. При исправлении
-legacy-файла путь **добавляется** в набор; удалять пути нельзя.
+`src/backtest/simulator.py`, `src/backtest/walk_forward.py`, `src/strategies/_template`,
+`src/strategies/strategy_registry.py`, `src/trading/pending_recovery.py`, `tests`. При
+исправлении legacy-файла путь **добавляется** в набор; удалять пути нельзя.
 
 Правила веток: `main` — только через PR (обход правил запрещён и для администратора),
 `dev` — прямые push разрешены, force-push и удаление запрещены.

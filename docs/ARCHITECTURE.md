@@ -138,6 +138,7 @@ p_selima_v8.1/
 │   ├── backtest/
 │   │   ├── simulator.py               [C] TradeSimulator, ExitRules, SizingRules — единый цикл TP/SL
 │   │   │                                  (SL-first, гэпы по open, exit_time = конец бара, ADR-012)
+│   │   ├── walk_forward.py            [C] окна train/test, отбор параметров на train, OOS-прогон (ADR-015)
 │   │   └── backtester.py              [L] отдельный движок бэктеста (не используется стратегиями)
 │   ├── storage/models.py              [L] устаревшая ORM-модель "marketdata"
 │   └── utils/
@@ -150,6 +151,7 @@ p_selima_v8.1/
 │   ├── test_signal_idempotency.py     signal_key: стабильность, повторный сигнал не создаёт сделку
 │   ├── test_pending_recovery.py       дозакрытие зависших PENDING (ADR-013)
 │   ├── test_trade_simulator.py        TradeSimulator: вход/TP/SL/гэпы/размер позиции/entry_filter
+│   ├── test_walk_forward.py           walk-forward: окна, изоляция параметров, warmup, пропуск окон
 │   └── test_allow_short_parity.py     backtest и live одинаково соблюдают allow_short
 │
 ├── dashboard/                         [C] актуальный дашборд
@@ -494,6 +496,11 @@ PostgreSQL). Оставлен для legacy-скриптов и локальны
 18. `src/strategies/levels_detector{,_v4,_v5,_debug}.py` — 4 версии одного детектора.
 19. ~~`config/config.py` — пустой файл.~~ **Удалён (T0-6).**
 20. `src/backtest/backtester.py` — свой `Trade`/`Order`, не связан с `BaseStrategy`.
+20a. ~~`optimization/grid_tp_sl_dual_ma.py` подбирает TP/SL на той же истории, на которой
+    потом отчитывается, — метрики систематически завышены.~~ **Закрыто (T2-8, ADR-015):**
+    `src/backtest/walk_forward.py` + `scripts/walk_forward.py` — отбор параметров на train,
+    оценка только на OOS-периодах. Скрипт подбора не удалён, но его результат больше
+    не считается доказательством.
 21. `scheduler.py` (855) и `scheduler_notifier.py` (1060) — почти полные дубликаты.
 22. 20+ одноразовых скриптов в корне (`check_data_db.py`, `inspect_client.py`,
     `export_aflt_candles.py`, `test_*.py`, ...).
@@ -532,6 +539,7 @@ flowchart LR
     subgraph domain["Домен (чистый Python, без API/БД)"]
         STRAT["strategies/<br/>только detect_signals"]
         EXEC["TradeSimulator<br/>единый TP/SL/комиссии"]
+        WF["WalkForward<br/>train → test"]
         RISK["RiskManager<br/>размер позиции"]
         STATS[StatsCalculator]
     end
@@ -547,6 +555,8 @@ flowchart LR
     DASH --> STRAT
     STRAT --> MKT
     EXEC --> STATS
+    WF --> STRAT
+    WF --> EXEC
     SCHED --> BROKER
     SCHED --> REPO
 ```

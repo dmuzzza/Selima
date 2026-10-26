@@ -29,6 +29,7 @@ dist/
 # Data & artifacts
 debug/_old/
 debug/baseline_pnl*.json
+debug/walk_forward*.json
 *.db
 *.db-journal
 *.sqlite3

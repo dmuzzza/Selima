@@ -7,6 +7,18 @@
 
 ### Added
 
+- `src/backtest/walk_forward.py`: walk-forward валидация (T2-8, ADR-015). `generate_windows()`
+  строит последовательные пары train/test, `run_walk_forward()` отбирает лучший конфиг
+  сетки на train и прогоняет **только его** на test; OOS-сделки склеиваются, окна без
+  достаточного числа train-сделок пропускаются. Test-период получает `warmup_bars`
+  свечей до `test_start` для прогрева индикаторов, сделки из прогрева отбрасываются.
+  Runner внедряется, поэтому модуль не зависит от БД и фабрики стратегий.
+- `scripts/walk_forward.py`: прогон walk-forward по БД (`config/instruments.json`),
+  сетка TP/SL, сводка по инструментам (OOS PnL, in-sample PnL, win rate, `oos/is`)
+  и JSON-отчёт в `debug/walk_forward_<tag>.json`.
+- `tests/test_walk_forward.py`: 20 тестов — границы и шаг окон, изоляция параметров
+  (на test уходит конфиг, выбранный на train), warmup и отбрасывание его сделок,
+  пропуск окон, OOS-агрегаты и сериализация отчёта.
 - `src/strategies/_template/`: шаблон новой стратегии (`config.py`, `strategy.py`) с
   готовым `detect_signals` и декоратором `@register_strategy` (T3-9). Пакеты с префиксом
   `_` не попадают в реестр, поэтому шаблон не торгуется.
