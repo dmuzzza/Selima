@@ -1,0 +1,45 @@
+{
+  "version": "1",
+  "notes": [
+    "Costs are estimates for backtesting, not broker quotes. Calibrate them from the order book before trusting a live candidate.",
+    "spread_bps is the FULL spread: each side pays half of it. slippage_bps is a separate per-side value.",
+    "A zero-cost model is reported as GROSS and is not tradable (ADR-016).",
+    "Only instruments that differ from the default are listed; everything else inherits `default`."
+  ],
+  "default": {
+    "mode": "bps",
+    "spread_bps": 4.0,
+    "slippage_bps": 5.0
+  },
+  "instruments": {
+    "SBER": { "spread_bps": 2.0, "slippage_bps": 3.0 },
+    "GAZP": { "spread_bps": 2.0, "slippage_bps": 3.0 },
+    "LKOH": { "spread_bps": 2.0, "slippage_bps": 3.0 },
+    "MOEX": { "spread_bps": 2.0, "slippage_bps": 3.0 },
+    "T": { "spread_bps": 2.0, "slippage_bps": 3.0 },
+    "VTBR": { "spread_bps": 2.0, "slippage_bps": 3.0 },
+    "ALRS": { "spread_bps": 3.0, "slippage_bps": 3.0 },
+    "GMKN": { "spread_bps": 3.0, "slippage_bps": 4.0 },
+    "NVTK": { "spread_bps": 3.0, "slippage_bps": 4.0 },
+    "TATN": { "spread_bps": 3.0, "slippage_bps": 3.0 },
+    "SMLT": { "spread_bps": 10.0, "slippage_bps": 15.0 },
+    "SPBE": { "spread_bps": 10.0, "slippage_bps": 15.0 },
+    "SGZH": { "spread_bps": 10.0, "slippage_bps": 15.0 },
+    "HEAD": { "spread_bps": 12.0, "slippage_bps": 18.0 },
+    "POSI": { "spread_bps": 8.0, "slippage_bps": 12.0 },
+    "ASTR": { "spread_bps": 8.0, "slippage_bps": 12.0 },
+    "SVCB": { "spread_bps": 8.0, "slippage_bps": 12.0 },
+    "SELG": { "spread_bps": 8.0, "slippage_bps": 12.0 },
+    "EUTR": { "spread_bps": 8.0, "slippage_bps": 12.0 },
+    "FLOT": { "spread_bps": 6.0, "slippage_bps": 8.0 },
+    "GLDRUB_TOM": { "spread_bps": 5.0, "slippage_bps": 8.0 },
+    "CNYRUB_TOM": { "spread_bps": 5.0, "slippage_bps": 8.0 },
+    "CNRU": { "spread_bps": 5.0, "slippage_bps": 8.0 },
+    "CRU6": {
+      "mode": "ticks",
+      "tick_size": 0.01,
+      "spread_ticks": 1.0,
+      "slippage_ticks": 2.0
+    }
+  }
+}

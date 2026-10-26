@@ -302,6 +302,9 @@ class BaseStrategy(ABC):
             entry_filter=self.entry_filter,
             allow_short=self.allow_short,
             bar_duration=self._bar_duration(),
+            # Cost model is injected by the caller (scripts, walk-forward):
+            # strategies must not read files or guess spreads (ADR-016).
+            costs=self.config.get("costs"),
             logger=self.logger,
             debug=self.debug,
         )

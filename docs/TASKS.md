@@ -90,7 +90,7 @@ ImportError; в логах нет токенов и `account_id`.
 | T2-4 | **Единое хранилище сделок** (PostgreSQL) + Alembic; SQLite — только для локальной разработки | P1 | L | in-progress (scheduler и notifier переведены на PG; Alembic и перенос старых данных — todo) |
 | T2-5 | **Идемпотентность live-торговли**: проверка «сигнал уже обработан» по `(figi, timeframe, candle_open_time, direction)`, а не только по открытой позиции | P0 | M | done |
 | T2-6 | **Защита от двойного открытия** при рестарте: блокировка/ключ в БД перед `post_market_order` | P0 | M | done (PENDING-запись с `signal_key` создаётся до отправки ордера; зависшие PENDING разбирает `PendingRecovery`, ADR-013) |
-| T2-7 | **Модель издержек**: проскальзывание, гэпы, спред, реальные тарифы брокера (сейчас только 0.05% + маржа) | P1 | M | todo |
+| T2-7 | **Модель издержек**: проскальзывание, гэпы, спред, реальные тарифы брокера (сейчас только 0.05% + маржа) | P1 | M | done (спред ½ на сторону + проскальзывание, `TickCosts` для фьючерсов, метки GROSS/NET; ADR-016) |
 | T2-8 | **Walk-forward и out-of-sample** вместо подбора TP/SL на всей истории (сейчас `optimization/grid_tp_sl_dual_ma.py` подбирает на тех же данных) | P0 (риск переобучения) | L | done (`src/backtest/walk_forward.py` + `scripts/walk_forward.py`, ADR-015) |
 | T2-9 | **Метрики риска**: Sortino, Calmar, VaR, средняя просадка, распределение R-multiple | P2 | M | todo |
 | T2-10 | **Наблюдаемость**: структурные JSON-логи, метрики (открытые позиции, ошибки API, лаг данных), healthcheck-endpoint | P1 | M | todo |

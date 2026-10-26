@@ -89,7 +89,7 @@ p_selima_v8.1/
 ├── scheduler_notifier.py    # только сигналы + уведомления в VK
 ├── app_dashboard.py         # legacy-дашборд-монолит (~1800 строк)
 ├── dashboard/               # актуальный дашборд (пакет)
-├── config/                  # instruments.json, комиссии, лимиты
+├── config/                  # instruments.json, costs.json, комиссии, лимиты
 ├── src/                     # ядро: brokers, market_data, strategies, trading, ...
 ├── migrations/              # ручные миграции (SQLite legacy + PostgreSQL signal_key)
 ├── scripts/                 # одноразовые утилиты и экспорт
@@ -129,6 +129,7 @@ p_selima_v8.1/
 | Миграция БД (signal_key) | `uv run python migrations/migrate_add_signal_key.py` |
 | Baseline PnL бэктеста (до/после правок движка) | `uv run python scripts/pnl_baseline.py --tag before` |
 | Walk-forward (OOS-оценка TP/SL) | `uv run python scripts/walk_forward.py --tag before` |
+| Бэктест с издержками | `uv run python scripts/walk_forward.py --costs-file config/costs.json --tag net` |
 | Тесты | `uv run pytest` |
 | Линтер / типы | `uv run ruff check .` / `uv run mypy src` |
 
@@ -145,9 +146,10 @@ p_selima_v8.1/
 | Тесты | `pytest -q` | все |
 
 `CLEAN_SET` — список файлов/каталогов без legacy-долга (T1-7): сейчас
-`src/backtest/simulator.py`, `src/backtest/walk_forward.py`, `src/strategies/_template`,
-`src/strategies/strategy_registry.py`, `src/trading/pending_recovery.py`, `tests`. При
-исправлении legacy-файла путь **добавляется** в набор; удалять пути нельзя.
+`src/backtest/costs.py`, `src/backtest/simulator.py`, `src/backtest/walk_forward.py`,
+`src/strategies/_template`, `src/strategies/strategy_registry.py`,
+`src/trading/pending_recovery.py`, `tests`. При исправлении legacy-файла путь
+**добавляется** в набор; удалять пути нельзя.
 
 Правила веток: `main` — только через PR (обход правил запрещён и для администратора),
 `dev` — прямые push разрешены, force-push и удаление запрещены.
@@ -176,5 +178,10 @@ p_selima_v8.1/
   PENDING-записи и открытием позиции, `PendingRecovery` при старте и в P2 сверяет запись
   с биржей: позиция есть → OPEN; позиции и операций нет → CANCELLED с освобождением
   ключа; операция была, позиции нет → запись остаётся PENDING и требует ручной проверки.
+- **Бэктест без издержек — не доказательство.** `config/costs.json` задаёт спред и
+  проскальзывание по инструментам. Отчёт с нулевыми издержками помечается `GROSS` и
+  `tradable=false`, а `scripts/walk_forward.py` такие прогоны отклоняет без
+  `--allow-gross`. OOS-результат и кандидат в live обязаны считаться с ненулевыми
+  издержками (ADR-016).
 - `TEST_MODE=true` генерирует фиктивные сигналы вместо рыночных.
 - `account_id` в логах маскируется (`***1234`); ключ шифрования не логируется.

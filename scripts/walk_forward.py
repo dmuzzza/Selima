@@ -5,8 +5,13 @@ windows, picks TP/SL on train and replays the winner on test. Only the test
 results are reported as the expected performance; train PnL is printed next to
 them to make overfitting visible.
 
+Costs come from `config/costs.json` (per instrument) and are applied to every
+run. A zero-cost run is refused unless `--allow-gross` is given: such a report
+is marked GROSS and is not tradable (ADR-016).
+
     uv run python scripts/walk_forward.py --tag before
     uv run python scripts/walk_forward.py --ticker SBER --timeframe 1h --limit 5
+    uv run python scripts/walk_forward.py --spread-bps 2 --slippage-bps 5
 
 Candles are read from PostgreSQL only, so no broker token is needed. Reports go
 to debug/ (git-ignored).
@@ -27,6 +32,12 @@ if str(ROOT) not in sys.path:
 
 from dotenv import load_dotenv  # noqa: E402
 
+from src.backtest.costs import (  # noqa: E402
+    BpsCosts,
+    CostConfig,
+    CostModel,
+    load_costs,
+)
 from src.backtest.walk_forward import (  # noqa: E402
     WalkForwardResult,
     generate_windows,
@@ -63,12 +74,14 @@ def build_grid(tp_values: list[float], sl_values: list[float]) -> list[dict]:
     ]
 
 
-def build_runner(strategy_code: str, timeframe: str, ticker: str):
+def build_runner(strategy_code: str, timeframe: str, ticker: str, costs: CostModel):
     """Runner that builds a fresh strategy per config and returns its trades."""
 
     def runner(config: dict, candles) -> list[Trade]:
         strategy = StrategyFactory.create(
-            strategy_code, timeframe, config={"ticker": ticker, **config}
+            strategy_code,
+            timeframe,
+            config={"ticker": ticker, "costs": costs, **config},
         )
         return strategy.run(candles)["trades"]
 
@@ -83,15 +96,24 @@ def run_instrument(
     ticker: str,
     timeframe: str,
     args: argparse.Namespace,
+    costs_config: CostConfig,
+    global_costs: CostModel | None,
 ) -> dict:
     """Walk-forward for one instrument/timeframe pair."""
     candles = history.get_candles(figi, Timeframe(timeframe))
+    costs = global_costs if global_costs is not None else costs_config.for_ticker(ticker)
     entry: dict = {
         "figi": figi,
         "ticker": ticker,
         "timeframe": timeframe,
         "candles": len(candles),
+        "costs": costs_config.describe(ticker) if global_costs is None else costs.describe(),
     }
+
+    if not costs.is_tradable and not args.allow_gross:
+        # A gross report is not evidence about future performance (ADR-016).
+        entry.update({"status": "gross_rejected"})
+        return entry
 
     if len(candles) < 2:
         entry.update({"status": "no_data"})
@@ -112,7 +134,7 @@ def run_instrument(
     result: WalkForwardResult = run_walk_forward(
         candles,
         windows,
-        runner=build_runner(strategy_code, timeframe, ticker),
+        runner=build_runner(strategy_code, timeframe, ticker, costs),
         grid=build_grid(args.tp, args.sl),
         warmup_bars=args.warmup_bars,
         min_train_trades=args.min_train_trades,
@@ -136,6 +158,20 @@ def collect(args: argparse.Namespace) -> dict:
     timeframes = args.timeframe or ["1h", "4h", "1d"]
     history = build_history_manager()
 
+    costs_config = load_costs(args.costs_file)
+    global_costs: CostModel | None = None
+    if args.spread_bps is not None or args.slippage_bps is not None:
+        global_costs = BpsCosts(
+            spread_bps=args.spread_bps or 0.0,
+            slippage_bps=args.slippage_bps or 0.0,
+        )
+        if not global_costs.is_tradable and not args.allow_gross:
+            raise SystemExit(
+                "Refusing to run: --spread-bps/--slippage-bps are zero, "
+                "the report would be GROSS and not tradable. "
+                "Pass --allow-gross if you really want it."
+            )
+
     runs: list[dict] = []
     for instrument in instruments:
         available = set(instrument.get("timeframes", timeframes))
@@ -150,12 +186,15 @@ def collect(args: argparse.Namespace) -> dict:
                 ticker=instrument["ticker"],
                 timeframe=timeframe,
                 args=args,
+                costs_config=costs_config,
+                global_costs=global_costs,
             )
             runs.append(entry)
             if entry["status"] == "ok":
                 print(format_run(entry), flush=True)
 
     evaluated = [r for r in runs if r["status"] == "ok"]
+    rejected = [r for r in runs if r["status"] == "gross_rejected"]
     return {
         "strategy": args.strategy,
         "tag": args.tag,
@@ -165,8 +204,23 @@ def collect(args: argparse.Namespace) -> dict:
         "step_days": args.step_days or args.test_days,
         "warmup_bars": args.warmup_bars,
         "min_train_trades": args.min_train_trades,
+        "costs": (
+            global_costs.describe()
+            if global_costs is not None
+            else {
+                "costs_version": f"{costs_config.version}+{costs_config.sha256[:12]}",
+                "source": str(args.costs_file),
+                "scope": "per-instrument",
+                "default": costs_config.for_ticker(None).describe(),
+                "tradable": costs_config.for_ticker(None).is_tradable,
+                "label": (
+                    "NET" if costs_config.for_ticker(None).is_tradable else "GROSS"
+                ),
+            }
+        ),
         "runs": len(runs),
         "evaluated": len(evaluated),
+        "gross_rejected": len(rejected),
         "profitable_runs": sum(1 for r in evaluated if r["oos_pnl"] > 0),
         "oos_pnl": round(sum(r["oos_pnl"] for r in evaluated), 2),
         "in_sample_pnl": round(sum(r["in_sample_pnl"] for r in evaluated), 2),
@@ -178,12 +232,13 @@ def format_run(entry: dict) -> str:
     """One summary line per instrument/timeframe."""
     degradation = entry.get("degradation_percent")
     degradation_text = f"{degradation:>7.1f}%" if degradation is not None else "      —"
+    label = entry.get("costs", {}).get("label", "?")
     return (
         f"{entry['ticker']:<12} {entry['timeframe']:<3} "
         f"windows {entry['evaluated_windows']:>3}/{entry['evaluated_windows'] + entry['skipped_windows']:<3} "
         f"oos {entry['oos_pnl']:>12.2f} is {entry['in_sample_pnl']:>12.2f} "
         f"trades {entry['oos_trades']:>4} win {entry['oos_win_rate']:>5.1f}% "
-        f"oos/is {degradation_text}"
+        f"oos/is {degradation_text} costs {label}"
     )
 
 
@@ -235,6 +290,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="SL grid, e.g. 0.5,1,2",
     )
     parser.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR))
+    parser.add_argument(
+        "--costs-file",
+        default=str(ROOT / "config" / "costs.json"),
+        help="per-instrument spread/slippage/commission config",
+    )
+    parser.add_argument(
+        "--spread-bps",
+        type=float,
+        default=None,
+        help="override the full spread for every instrument",
+    )
+    parser.add_argument(
+        "--slippage-bps",
+        type=float,
+        default=None,
+        help="override the per-side slippage for every instrument",
+    )
+    parser.add_argument(
+        "--allow-gross",
+        action="store_true",
+        help="allow a zero-cost run (report is marked GROSS and is not tradable)",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args(argv)
 
@@ -263,9 +340,13 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"\nsnapshot: {out_path}\n"
         f"runs={payload['runs']} evaluated={payload['evaluated']} "
+        f"gross_rejected={payload['gross_rejected']} "
         f"profitable={payload['profitable_runs']}\n"
-        f"oos_pnl={payload['oos_pnl']:.2f} in_sample_pnl={payload['in_sample_pnl']:.2f}"
+        f"oos_pnl={payload['oos_pnl']:.2f} in_sample_pnl={payload['in_sample_pnl']:.2f} "
+        f"costs={payload['costs']['label']}"
     )
+    if not payload["costs"]["tradable"]:
+        print("WARNING: GROSS run, not tradable (ADR-016).")
     return 0
 
 

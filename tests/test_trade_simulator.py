@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from src.backtest.costs import BpsCosts
 from src.backtest.simulator import ExitRules, SizingRules, TradeSimulator
 from src.market_data.models import Candle
 from src.strategies.base_strategy import Signal
@@ -38,13 +39,24 @@ def simple_pnl(trade, balance: float) -> None:
     trade.pnl_percent = pnl / trade.quantity * 100.0
 
 
-def run(candles, signals, *, tp=10.0, sl=5.0, allow_short=True, entry_filter=None, percent=100.0):
+def run(
+    candles,
+    signals,
+    *,
+    tp=10.0,
+    sl=5.0,
+    allow_short=True,
+    entry_filter=None,
+    percent=100.0,
+    costs=None,
+):
     simulator = TradeSimulator(
         exit_rules=ExitRules(tp_percent=tp, sl_percent=sl),
         sizing=SizingRules(initial_balance=1000.0, position_size_percent=percent),
         on_close=simple_pnl,
         entry_filter=entry_filter,
         allow_short=allow_short,
+        costs=costs,
     )
     return simulator.run(candles, signals)
 
@@ -331,3 +343,95 @@ def test_exit_rules_levels():
 
     assert rules.levels(100.0, is_long=True) == (pytest.approx(102.0), pytest.approx(99.0))
     assert rules.levels(100.0, is_long=False) == (pytest.approx(98.0), pytest.approx(101.0))
+
+
+# ── transaction costs (ADR-016) ────────────────────────────────────────────
+
+
+def test_costs_worsen_market_entry_and_levels_follow_it():
+    """Levels are built from the paid entry price, not from the candle open."""
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 101.0, 99.0, 100.0),
+    ])
+    costs = BpsCosts(spread_bps=2.0, slippage_bps=3.0)
+    trades = run(candles, [signal(0)], tp=10.0, sl=5.0, costs=costs)
+
+    # 100 * (2/2 + 3) / 10000 = 0.04
+    assert trades[0].entry_price == pytest.approx(100.04)
+    assert trades[0].tp_level == pytest.approx(110.044)
+    assert trades[0].sl_level == pytest.approx(95.038)
+
+
+def test_costs_worsen_stop_loss_fill():
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 100.0, 90.0, 92.0),  # SL 95 is hit intrabar
+    ])
+    without = run(candles, [signal(0)], tp=50.0, sl=5.0)
+    with_costs = run(
+        candles, [signal(0)], tp=50.0, sl=5.0, costs=BpsCosts(2.0, 3.0)
+    )
+
+    assert without[0].exit_type == with_costs[0].exit_type == "SL"
+    # Half spread + slippage = 4 bps against the trader on the exit as well.
+    assert with_costs[0].exit_price < without[0].exit_price
+    assert with_costs[0].pnl_abs < without[0].pnl_abs
+
+
+def test_costs_do_not_touch_take_profit_fill():
+    """TP is a limit order: it fills at its level even when costs are non-zero."""
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 101.0, 99.0, 100.0),
+        (100.0, 120.0, 99.0, 119.0),  # TP 110 is hit
+    ])
+    costs = BpsCosts(spread_bps=10.0, slippage_bps=20.0)
+    trades = run(candles, [signal(0)], tp=10.0, sl=50.0, costs=costs)
+
+    assert trades[0].exit_type == "TP"
+    assert trades[0].exit_price == pytest.approx(trades[0].tp_level)
+
+
+def test_costs_apply_to_gap_exit_at_open():
+    """Gap fills at the candle open and still pays the market costs."""
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 100.5, 99.5, 100.0),
+        (90.0, 91.0, 89.0, 90.0),  # opens below SL 95
+    ])
+    costs = BpsCosts(spread_bps=2.0, slippage_bps=3.0)
+    trades = run(candles, [signal(0)], tp=50.0, sl=5.0, costs=costs)
+
+    assert trades[0].exit_type == "SL"
+    # 90 * (1 + 3) / 10000 = 0.036 worse than the open
+    assert trades[0].exit_price == pytest.approx(89.964)
+
+
+def test_short_side_costs_are_symmetric():
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 110.0, 100.0, 109.0),  # SL 105 is hit
+    ])
+    costs = BpsCosts(spread_bps=2.0, slippage_bps=3.0)
+    trades = run(candles, [signal(0, "BEARISH")], tp=50.0, sl=5.0, costs=costs)
+
+    assert trades[0].entry_price == pytest.approx(99.96)
+    assert trades[0].exit_price > trades[0].sl_level
+
+
+def test_zero_costs_keep_legacy_prices():
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 120.0, 99.0, 119.0),
+    ])
+    legacy = run(candles, [signal(0)], tp=10.0, sl=5.0)
+    explicit = run(candles, [signal(0)], tp=10.0, sl=5.0, costs=BpsCosts())
+
+    assert legacy[0].entry_price == explicit[0].entry_price == 100.0
+    assert legacy[0].exit_price == pytest.approx(110.0)
+    assert explicit[0].exit_price == pytest.approx(110.0)
+    assert legacy[0].pnl_abs == explicit[0].pnl_abs

@@ -73,7 +73,8 @@ p_selima_v8.1/
 │   ├── instruments.json               [C] список инструментов: figi, ticker, enabled, timeframes
 │   ├── trading_config.py              [C] лимиты: max_positions_per_account=6, min_position_size
 │   ├── trading_mode.py                [C] TRADING_MODE=dry_run|live (+LIVE_CONFIRM), по умолчанию dry_run
-│   └── commissions.py                 [C] комиссии: 0.05% за операцию, маржинальные брекеты
+│   ├── commissions.py                 [C] комиссии: 0.05% за операцию, маржинальные брекеты
+│   └── costs.json                     [C] издержки бэктеста по инструментам: спред/проскальзывание (ADR-016)
 │
 ├── src/
 │   ├── __init__.py                    пакет
@@ -138,6 +139,7 @@ p_selima_v8.1/
 │   ├── backtest/
 │   │   ├── simulator.py               [C] TradeSimulator, ExitRules, SizingRules — единый цикл TP/SL
 │   │   │                                  (SL-first, гэпы по open, exit_time = конец бара, ADR-012)
+│   │   ├── costs.py                   [C] CostModel: спред (½ на сторону), проскальзывание, метки GROSS/NET (ADR-016)
 │   │   ├── walk_forward.py            [C] окна train/test, отбор параметров на train, OOS-прогон (ADR-015)
 │   │   └── backtester.py              [L] отдельный движок бэктеста (не используется стратегиями)
 │   ├── storage/models.py              [L] устаревшая ORM-модель "marketdata"
@@ -152,6 +154,7 @@ p_selima_v8.1/
 │   ├── test_pending_recovery.py       дозакрытие зависших PENDING (ADR-013)
 │   ├── test_trade_simulator.py        TradeSimulator: вход/TP/SL/гэпы/размер позиции/entry_filter
 │   ├── test_walk_forward.py           walk-forward: окна, изоляция параметров, warmup, пропуск окон
+│   ├── test_costs.py                  издержки: спред/проскальзывание, TP-лимитка, конфиг, GROSS/NET
 │   └── test_allow_short_parity.py     backtest и live одинаково соблюдают allow_short
 │
 ├── dashboard/                         [C] актуальный дашборд
@@ -241,6 +244,8 @@ PostgreSQL (`PgLiveTradeRepository` / `PgStopOrderRepository`). SQLite-репо�
 | Компонент | Зависит от | Используется в |
 |---|---|---|
 | `BaseStrategy` | `Candle`, `config.commissions` | все стратегии, `StrategyFactory` |
+| `TradeSimulator` | `Candle`, `Signal`, `Trade`, `CostModel` | `BaseStrategy.execute_trades()` |
+| `CostModel` (`costs.py`) | `config/commissions.py`, `config/costs.json` | `TradeSimulator`, `scripts/*` |
 | `StrategyFactory` | `strategy_registry` | scheduler, dashboard |
 | `HistoryManager` | `AbstractBroker`, SQLAlchemy | `DataUpdater`, dashboard, скрипты |
 | `DataUpdater` | `HistoryManager`, `BrokerFactory`, `instruments.json` | scheduler |
@@ -481,6 +486,10 @@ PostgreSQL). Оставлен для legacy-скриптов и локальны
     сигнала, поэтому `check_last_signal()` фильтр не применяет (T3-4, `EntryPolicy`).
 11. `config/commissions.py:41` — `COMMISSION_MODE = "SHORT_ONLY"` глобально; бэктест
     LONG не учитывает комиссии, сравнение стратегий некорректно.
+    **Частично закрыто (T2-7, ADR-016):** спред и проскальзывание теперь учитываются
+    (`src/backtest/costs.py`), а отчёт показывает комиссию отдельной строкой и помечает
+    нулевую модель как GROSS. Глобальный `COMMISSION_MODE` остаётся: перевести его в
+    конфиг стратегии — отдельная задача.
 12. `config/trading_config.py:13` — `max_positions_per_account = 6`, а
     `docs/PROJECT_DOCUMENTATION.md` и docstring `orchestrator` говорят про 3.
 13. Смешаны naive и aware datetime: API отдаёт UTC, `HistoryManager` конвертирует в MSK

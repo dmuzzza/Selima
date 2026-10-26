@@ -13,13 +13,18 @@ addressed separately (T3-5):
 - exit time is the close of the candle that triggered the exit (open time plus
   `bar_duration`), not the moment the level was actually touched;
 - gaps are handled at the candle open only: if the candle opens beyond a level,
-  the fill is the open price, not the level; intrabar slippage is not modelled.
+  the fill is the open price, not the level;
+- intrabar slippage is not modelled; spread and slippage are a flat per-side
+  cost applied to the fill price (`src/backtest/costs.py`, ADR-016), so a
+  limit TP fills exactly at its level and a market exit pays half spread plus
+  slippage.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 
+from src.backtest.costs import ZERO_COSTS, CostModel
 from src.market_data.models import Candle
 from src.strategies.base_strategy import Signal, Trade
 
@@ -71,6 +76,7 @@ class TradeSimulator:
         entry_filter: EntryFilter | None = None,
         allow_short: bool = True,
         bar_duration: timedelta | None = None,
+        costs: CostModel | None = None,
         logger=None,
         debug: bool = False,
     ) -> None:
@@ -82,6 +88,9 @@ class TradeSimulator:
         # Duration of one candle: exit_time is reported as the close of the bar
         # that triggered the exit. None keeps the raw candle open time.
         self.bar_duration = bar_duration
+        # Spread and slippage applied to execution prices only, never to the
+        # TP/SL levels themselves (ADR-016).
+        self.costs: CostModel = costs if costs is not None else ZERO_COSTS
         self.logger = logger
         self.debug = debug
 
@@ -116,10 +125,13 @@ class TradeSimulator:
         if exit is None:
             return False
 
-        exit_type, exit_price = exit
+        exit_type, raw_price = exit
+        # Costs are applied to the fill, not to the level: the level decides
+        # *whether* the trade closes, the cost model decides at what price.
+        fill_price = self.costs.exit_price(raw_price, trade.is_long(), exit_type)
         trade.exit_time = self._exit_time(candle)
         trade.exit_index = candle_idx
-        trade.exit_price = exit_price
+        trade.exit_price = fill_price
         trade.exit_type = exit_type
         self.on_close(trade, balance)
 
@@ -193,11 +205,11 @@ class TradeSimulator:
             if self.entry_filter is not None and not self.entry_filter(candle_idx, candle, signal):
                 continue
 
-            entry_price = candle.open
+            is_long = signal.signal_type == "BULLISH"
+            # Entry is a market order: half spread + slippage against the trader.
+            entry_price = self.costs.entry_price(candle.open, is_long)
             position_size = self.sizing.position_size(balance)
-            tp_level, sl_level = self.exit_rules.levels(
-                entry_price, is_long=signal.signal_type == "BULLISH"
-            )
+            tp_level, sl_level = self.exit_rules.levels(entry_price, is_long=is_long)
 
             trade = Trade(
                 trade_id=trade_id,

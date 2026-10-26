@@ -13,6 +13,7 @@ env:
   # Modules that must stay clean. Legacy code (T1-7) is excluded until refactored:
   # add paths here as they are cleaned up, never remove them.
   CLEAN_SET: >-
+    src/backtest/costs.py
     src/backtest/simulator.py
     src/backtest/walk_forward.py
     src/strategies/_template
