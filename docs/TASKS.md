@@ -155,7 +155,7 @@ PnL по шагам: 327 803.20 → 291 905.42 (SL-first) → 292 815.68 (гэп
 | T5-3 | Dockerfile (multi-stage, `python:3.12-slim`, non-root, healthcheck) | P1 | todo |
 | T5-4 | docker-compose: app + postgres для локальной разработки | P1 | todo |
 | T5-5 | Alembic вместо ручных `migrations/*.py` | P2 | todo |
-| T5-6 | Инициализация git-репозитория, ветка `dev`, защита `main` | P0 (организационно) | in-progress (repo + `dev` созданы; branch protection — в настройках GitHub) |
+| T5-6 | Инициализация git-репозитория, ветка `dev`, защита `main` | P0 (организационно) | done (repo + `dev`; `main` — PR-only + запрет bypass/force-push/удаления, `dev` — запрет force-push/удаления) |
 
 ---
 
