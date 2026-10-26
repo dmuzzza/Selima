@@ -51,6 +51,7 @@ p_selima_v8.1/
 ├── vendor/t_tech_investments-*.whl    [D] SDK T-Invest (официальный индекс недоступен)
 ├── .env.example                       [D] шаблон переменных без значений
 ├── .gitignore / .dockerignore         [D]
+├── .github/workflows/ci.yml           [D] CI: ruff + mypy + pytest («чистый набор» + все тесты)
 ├── main.py                            [T] smoke-тест брокера
 ├── scheduler.py                       [C] автоторговля: P0/P1/P2
 ├── scheduler_notifier.py              [C] сигналы + VK, без сделок (~1060 строк)

@@ -1,9 +1,10 @@
 """Recovery of stale PENDING live trades (T2-6 tail)."""
 
 from datetime import datetime
+from typing import Any
 
 from src.trading.models import LiveTrade, TradeStatus
-from src.trading.pending_recovery import PendingRecovery
+from src.trading.pending_recovery import PendingRecovery, RecoverStats
 
 ACCOUNT = "2000123456"
 FIGI = "BBG004730N88"
@@ -99,7 +100,7 @@ class FakeTradeRepository:
 
 
 def make_trade(**kwargs) -> LiveTrade:
-    params = dict(
+    params: dict[str, Any] = dict(
         trade_id="SBER_LONG_abc123",
         ticker="SBER",
         figi=FIGI,
@@ -116,7 +117,7 @@ def make_trade(**kwargs) -> LiveTrade:
     return LiveTrade(**params)
 
 
-def run_recovery(trade, client) -> tuple[FakeTradeRepository, object]:
+def run_recovery(trade, client) -> tuple[FakeTradeRepository, RecoverStats]:
     repository = FakeTradeRepository([trade])
     recovery = PendingRecovery(
         token="test-token",

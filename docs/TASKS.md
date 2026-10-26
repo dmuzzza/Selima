@@ -73,7 +73,7 @@ ImportError; в логах нет токенов и `account_id`.
 | T1-4 | Исправить дефекты логики: двойной `check_last_signal` (`scheduler.py:463,512`), двойной `allow_short` (`base_strategy.py:208,221`), `total_pnl_percent` (`base_strategy.py:293`), сортировка перед Sharpe/Z-score | M | in-progress (двойной `allow_short` исправлен; остальное — todo) |
 | T1-5 | Привести время к единой зоне: всё хранится в UTC (aware), в MSK конвертируется только на выводе. Заменить `datetime.now()` на `datetime.now(timezone.utc)` | M | todo |
 | T1-6 | Убрать расхождение документации и кода: `max_positions_per_account` (6 vs 3), cron P2 (`*/3` vs «15 минут»), часы работы планировщика | S | todo |
-| T1-7 | Ввести `ruff` + `mypy` + `pytest`, прогнать по проекту, зафиксировать baseline (ошибки — в отдельный список) | M | in-progress (`pyproject.toml` настроен; ruff: 65 legacy-замечаний (UP006/UP035/UP045, `I001`, `F841`, `SIM102`), mypy: 56 ошибок в 7 файлах — в основном implicit Optional и `None`-арифметика в стратегиях. Новые модули (`simulator.py`, `tests/`) — чистые) |
+| T1-7 | Ввести `ruff` + `mypy` + `pytest`, прогнать по проекту, зафиксировать baseline (ошибки — в отдельный список) | M | in-progress (`pyproject.toml` настроен; ruff: 65 legacy-замечаний (UP006/UP035/UP045, `I001`, `F841`, `SIM102`), mypy: 56 ошибок в 7 файлах — в основном implicit Optional и `None`-арифметика в стратегиях. CI проверяет «чистый набор» (`CLEAN_SET` в `.github/workflows/ci.yml`): `simulator.py`, `pending_recovery.py`, `tests/`; по мере исправления legacy-файлов пути добавляются в набор) |
 
 **Приёмка T1:** в `src/` нет файлов-дубликатов; линтер и типы проходят на ядре;
 `docs/ARCHITECTURE.md` соответствует дереву.
@@ -97,7 +97,7 @@ ImportError; в логах нет токенов и `account_id`.
 | T2-11 | **Уведомления**: единый notifier-интерфейс (VK/Telegram), события: сигнал, сделка, ошибка, ежедневный отчёт | P2 | S | todo |
 | T2-12 | **Бэктест на нескольких инструментах одновременно** с общим капиталом и лимитом позиций (сейчас каждый инструмент считается изолированно) | P1 | L | todo |
 | T2-13 | **Дашборд**: убрать `debug=True`, вынести host/port в env, добавить equity-curve и таблицу метрик по стратегиям | P1 | M | todo |
-| T2-14 | **CI**: GitHub Actions — ruff, mypy, pytest на PR в `dev` | P1 | S | todo |
+| T2-14 | **CI**: GitHub Actions — ruff, mypy, pytest на PR в `dev` | P1 | S | done (`.github/workflows/ci.yml`; проверяется «чистый набор», список расширяется по мере T1-7) |
 | T2-15 | **Docker**: multi-stage, non-root, healthcheck, compose с PostgreSQL для локальной разработки | P1 | M | todo |
 | T2-16 | **Аудит зависимостей**: `pip-audit`, `bandit`, `trivy` в CI | P2 | S | todo |
 
@@ -151,7 +151,7 @@ PnL по шагам: 327 803.20 → 291 905.42 (SL-first) → 292 815.68 (гэп
 | ID | Задача | Приоритет | Статус |
 |---|---|---|---|
 | T5-1 | `tests/` + pytest: `BaseStrategy.calculate_stats`, `TradeSimulator`, `PositionManager` (моки), стратегии на синтетике | P0 | in-progress (52 теста: контракт стратегий, `TradeSimulator` включая модель исполнения, режим торговли, `signal_key`, `PendingRecovery`, `allow_short`) |
-| T5-2 | GitHub Actions: ruff + mypy + pytest | P1 | todo |
+| T5-2 | GitHub Actions: ruff + mypy + pytest | P1 | done (`.github/workflows/ci.yml`, см. T2-14) |
 | T5-3 | Dockerfile (multi-stage, `python:3.12-slim`, non-root, healthcheck) | P1 | todo |
 | T5-4 | docker-compose: app + postgres для локальной разработки | P1 | todo |
 | T5-5 | Alembic вместо ручных `migrations/*.py` | P2 | todo |

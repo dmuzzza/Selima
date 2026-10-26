@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+env:
+  # Modules that must stay clean. Legacy code (T1-7) is excluded until refactored:
+  # add paths here as they are cleaned up, never remove them.
+  CLEAN_SET: >-
+    src/backtest/simulator.py
+    src/trading/pending_recovery.py
+    tests
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check $CLEAN_SET
+
+      - name: Type check
+        # follow-imports=silent: legacy modules are not annotated yet (T1-7)
+        run: uv run mypy --follow-imports=silent $CLEAN_SET
+
+      - name: Tests
+        run: uv run pytest -q

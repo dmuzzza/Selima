@@ -8,13 +8,13 @@
 
 **Закрыты:** блокеры запуска (T0), безопасность режима торговли (T4-1/2/5),
 единый движок бэктеста (T2-1/T3-3), модель исполнения симулятора (T3-5),
-идемпотентность live-сигналов и восстановление зависших PENDING (T2-5/T2-6).
-`pytest` — 52 passed.
+идемпотентность live-сигналов и восстановление зависших PENDING (T2-5/T2-6),
+CI и защита веток (T2-14/T5-2/T5-6). `pytest` — 52 passed.
 Репозиторий: `https://github.com/dmuzzza/Selima.git`, рабочая ветка `dev`.
 
 Что ещё не сделано:
 
-- нет CI и `Dockerfile` / `docker-compose.yml` (T5-2, T5-3, T5-4, T2-14, T2-15);
+- нет `Dockerfile` / `docker-compose.yml` (T5-3, T5-4, T2-15);
 - не закрыт P0-риск переобучения: walk-forward вместо подбора TP/SL на всей
   истории (T2-8);
 - legacy-мусор в структуре: `src/sma_crossover/`, `app_dashboard.py`, одноразовые скрипты
@@ -132,6 +132,23 @@ p_selima_v8.1/
 | Линтер / типы | `uv run ruff check .` / `uv run mypy src` |
 
 `Dockerfile` и `docker-compose.yml` пока отсутствуют (`docs/TASKS.md`, T5-3, T5-4).
+
+## CI
+
+`.github/workflows/ci.yml` запускается на push в `dev` и на PR в `dev`/`main`:
+
+| Шаг | Команда | Область |
+|---|---|---|
+| Lint | `ruff check $CLEAN_SET` | чистый набор |
+| Типы | `mypy --follow-imports=silent $CLEAN_SET` | чистый набор |
+| Тесты | `pytest -q` | все |
+
+`CLEAN_SET` — список файлов/каталогов без legacy-долга (T1-7): сейчас
+`src/backtest/simulator.py`, `src/trading/pending_recovery.py`, `tests`. При исправлении
+legacy-файла путь **добавляется** в набор; удалять пути нельзя.
+
+Правила веток: `main` — только через PR (обход правил запрещён и для администратора),
+`dev` — прямые push разрешены, force-push и удаление запрещены.
 
 ## Документация
 

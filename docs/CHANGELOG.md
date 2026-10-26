@@ -7,6 +7,11 @@
 
 ### Added
 
+- `.github/workflows/ci.yml`: CI на push в `dev` и на PR в `dev`/`main` — `ruff`, `mypy`,
+  `pytest` (T2-14, T5-2). Проверяется «чистый набор» (`CLEAN_SET`: `simulator.py`,
+  `pending_recovery.py`, `tests/`), legacy-файлы добавляются по мере исправления (T1-7).
+  `mypy` запускается с `--follow-imports=silent`, так как импортируемые legacy-модули
+  пока не аннотированы.
 - `src/trading/pending_recovery.py`: `PendingRecovery` — дозакрытие зависших PENDING-сделок
   (хвост T2-6, ADR-013). Сверяет запись с биржей: позиция есть → OPEN с данными из
   портфеля; позиции и операций нет → CANCELLED с освобождением `signal_key`; операция
