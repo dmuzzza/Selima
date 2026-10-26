@@ -117,13 +117,13 @@ ImportError; в логах нет токенов и `account_id`.
 | T3-4 | Ввести `ExitPolicy` (протокол) + реализацию `PercentExitPolicy`; перенести TP/SL по тикерам в конфиг | M | todo |
 | T3-5 | Исправить модель исполнения в симуляторе: `position_size_percent`, несколько позиций, порядок TP/SL по фактическому касанию, гэпы, `exit_time` | M | done (T3-5a/b/c: SL-first, гэпы по `open`, `exit_time` = конец бара; ADR-012) |
 | T3-5d | Несколько позиций одновременно (сейчас одна на инструмент) | L | todo |
-| T3-6 | Ввести `code`/`name`/`description` как атрибуты класса; реестр — через декоратор `@register_strategy` (убрать ручные импорты) | S | todo |
+| T3-6 | Ввести `code`/`name`/`description` как атрибуты класса; реестр — через декоратор `@register_strategy` (убрать ручные импорты) | S | done (ADR-014: атрибуты `ClassVar`, автообнаружение пакетов, ручные импорты удалены) |
 | T3-7 | Унифицировать `Trade` (бэктест) и `LiveTrade` (live): общий `TradeRecord` или явный маппер `to_live_trade()` | M | todo |
 | T3-8 | Тест-паритет: `detect_signals(...)[-1]` == `check_last_signal(...)` на N инструментах и таймфреймах | M | todo |
-| T3-9 | Шаблон новой стратегии: `src/strategies/_template/` (config.py + strategy.py + test) | S | todo |
+| T3-9 | Шаблон новой стратегии: `src/strategies/_template/` (config.py + strategy.py + test) | S | done (`_template/` + `tests/test_strategy_registry.py`; пакеты на `_` не регистрируются) |
 | T3-10 | Перевести существующие стратегии на v2 (`sma_crossover`, `dual_ma_crossover_after_testing`), сверить PnL до/после на истории | L | done (dual_ma — бит-в-бит на 40 прогонах; sma_crossover изменился осознанно, см. ADR-011) |
 
-**Приёмка T3:** новая стратегия = 2 файла + строка регистрации; `pytest` содержит
+**Приёмка T3:** новая стратегия = 2 файла (регистрация декоратором, без правки реестра); `pytest` содержит
 тест-паритет; бэктест и live используют один и тот же `ExitRules`.
 
 Проверено после T3-5: `scripts/pnl_baseline.py` — 44 инструмента × 1h/4h/1d = 132

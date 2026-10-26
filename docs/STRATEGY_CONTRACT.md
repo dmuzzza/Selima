@@ -16,13 +16,15 @@
 | Scheduler (live) | `strategy.check_last_signal(candles)` | `Signal \| None` |
 | Scheduler (live) | `strategy.execute_live_trades(orchestrator, ticker, figi)` | `List[LiveTrade]` |
 | Дашборд (отрисовка) | `strategy.signals`, `strategy.trades` | заполнены после `run()` |
-| Реестр / UI | `strategy.name`, `strategy.description` | `str` |
+| Реестр / UI | `strategy.name`, `strategy.description` (атрибуты класса) | `str` |
 
-Сейчас в `BaseStrategy` объявлены `detect_signals`, `execute_trades`, `name`,
-`description`, а также **дефолтные реализации** `check_last_signal` и
-`execute_live_trades` (T0-3). Стратегия их не переопределяет — иначе критерий входа в
-бэктесте и в live расходится. Копии методов удалены из `src/strategies/sma_crossover/`;
-`dual_ma_crossover_after_testing` наследует их от базового класса.
+Сейчас в `BaseStrategy` объявлены `code`/`name`/`description` как `ClassVar[str]` и
+единственный абстрактный метод — `detect_signals`; `execute_trades`, `check_last_signal`
+и `execute_live_trades` имеют **дефолтные реализации** (T0-3, T3-6). Стратегия их не
+переопределяет — иначе критерий входа в бэктесте и в live расходится. Копии методов
+удалены из `src/strategies/sma_crossover/`; `dual_ma_crossover_after_testing` наследует
+их от базового класса. Реестр читает атрибуты класса и **не создаёт экземпляр**
+(ADR-014), поэтому UI не зависит от конструктора стратегии.
 
 ---
 
@@ -158,8 +160,8 @@ def check_last_signal(self, candles: List[Candle]) -> Optional[Signal]:
 ```python
 # src/strategies/base_strategy.py (v2)
 class BaseStrategy(ABC):
-    code: ClassVar[str]          # "dual_ma_crossover"
-    name: ClassVar[str]          # "Dual MA Crossover"
+    code: ClassVar[str]          # "dual_ma_crossover"  ← уже в v1 (T3-6)
+    name: ClassVar[str]          # "Dual MA Crossover"  ← уже в v1
     description: ClassVar[str]
 
     @abstractmethod
@@ -217,14 +219,18 @@ class ExitPolicy(Protocol):
 from src.market_data.models import Candle
 from src.strategies.base_strategy import BaseStrategy, Signal
 from src.strategies.indicators_builder import IndicatorsBuilder
+from src.strategies.strategy_registry import register_strategy
 
 
+@register_strategy
 class RSIReversalStrategy(BaseStrategy):
     code = "rsi_reversal"
     name = "RSI Reversal"
     description = "Buy RSI<30 above EMA200, sell RSI>70 below EMA200"
 
-    def __init__(self, timeframe: str, config: dict | None = None, debug: bool = False):
+    def __init__(
+        self, timeframe: str, config: dict | None = None, debug: bool = False
+    ) -> None:
         super().__init__(timeframe, config, debug)
         self.rsi_period = self.config.get("rsi_period", 14)
         self.low = self.config.get("oversold", 30)
@@ -256,14 +262,18 @@ class RSIReversalStrategy(BaseStrategy):
 ## 5. Чек-лист новой стратегии
 
 1. Пакет `src/strategies/<code>/` с `__init__.py`, `config.py`, `strategy.py`.
-2. Класс наследует `BaseStrategy`, задаёт `code`, `name`, `description`.
+   Быстрее всего — скопировать `src/strategies/_template/`.
+2. Класс наследует `BaseStrategy`, задаёт `code`, `name`, `description` атрибутами класса
+   и помечен `@register_strategy`.
 3. `__init__` вызывает `super().__init__(timeframe, config, debug)` **после** слияния
    дефолтного конфига (см. `get_config()` в существующих пакетах).
 4. `detect_signals` — чистая, без сети/БД/`datetime.now()`, возвращает `[]` при нехватке данных.
 5. `check_last_signal` не переопределяется (или переопределяется с тем же критерием).
 6. `execute_trades` не пишется — используется `TradeSimulator` (после v2).
 7. TP/SL берутся из `config` или `ExitPolicy`, не из литералов в коде.
-8. Регистрация: добавить код в `STRATEGY_REGISTRY` (`src/strategies/strategy_registry.py`).
+8. Регистрация: ничего править не нужно — `@register_strategy` + пакет внутри
+   `src/strategies`. Обязательное условие: `__init__.py` пакета импортирует `strategy`
+   (иначе декоратор не выполнится при автообнаружении). Реестр — ADR-014.
 9. Тест: `tests/strategies/test_<code>.py` на синтетических свечах —
    (а) сигнал есть/нет на заданном паттерне, (б) число сделок, (в) знак PnL.
 10. Прогон `strategy.run(real_candles)` без исключений, `stats.closed_trades > 0`.
@@ -294,14 +304,15 @@ class RSIReversalStrategy(BaseStrategy):
 |---|---|---|
 | 1 | ~~Добавить `check_last_signal` и `execute_live_trades` в `BaseStrategy`~~ — **сделано (T0-3)** | — |
 | 2 | ~~Удалить копии этих методов из стратегий~~ — **сделано для `src/strategies/sma_crossover/`; остальные копии удаляются в T1-2** | — |
-| 3 | Вынести цикл TP/SL в `TradeSimulator`, стратегии вызывают его | средний: сверить PnL до/после на истории |
-| 4 | Ввести `ExitRules`/`ExitPolicy`, перенести TP/SL-таблицы в конфиг | средний |
-| 5 | Перевести `LiveTrade` и `Trade` на общий `TradeRecord` (или явный маппер) | высокий |
-| 6 | Добавить тест-паритет: `detect_signals` vs `check_last_signal`, бэктест vs live-параметры | — |
+| 3 | ~~`code`/`name`/`description` — атрибуты класса, регистрация декоратором, автообнаружение~~ — **сделано (T3-6, ADR-014)** | — |
+| 4 | Вынести цикл TP/SL в `TradeSimulator`, стратегии вызывают его | средний: сверить PnL до/после на истории |
+| 5 | Ввести `ExitRules`/`ExitPolicy`, перенести TP/SL-таблицы в конфиг | средний |
+| 6 | Перевести `LiveTrade` и `Trade` на общий `TradeRecord` (или явный маппер) | высокий |
+| 7 | Добавить тест-паритет: `detect_signals` vs `check_last_signal`, бэктест vs live-параметры | — |
 
 Критерий завершения: новая стратегия добавляется двумя файлами (`config.py`,
-`strategy.py`) + строкой в реестре, и для неё автоматически работают бэктест,
-дашборд, live и аналитика.
+`strategy.py`) внутри своего пакета — без правок в реестре — и для неё автоматически
+работают бэктест, дашборд, live и аналитика.
 
 ---
 

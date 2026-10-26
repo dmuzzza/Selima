@@ -10,9 +10,8 @@ Base Strategy Class V1
 
 Все стратегии наследуются от BaseStrategy и реализуют:
 1. detect_signals() - определение сигналов
-2. execute_trades() - симуляция торговли
-3. name - имя стратегии
-4. description - описание
+2. execute_trades() - симуляция торговли (общая реализация, переопределять не нужно)
+3. code / name / description - атрибуты класса (нужны реестру и UI)
 
 Общие методы (уже реализованы):
 - calculate_stats() - расчёт статистики
@@ -28,7 +27,7 @@ import statistics
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import ClassVar, Dict, List, Optional
 from config.commissions import (
     COMMISSION_MODE,
     TRANSACTION_COMMISSION_PERCENT,
@@ -185,13 +184,22 @@ class StrategyStats:
 class BaseStrategy(ABC):
     """
     Базовый класс для всех торговых стратегий.
-    
-    Каждая стратегия должна реализовать:
-    - detect_signals() - логика определения сигналов
-    - execute_trades() - логика симуляции торговли
-    - name - имя стратегии для UI
-    - description - описание стратегии
+
+    Каждая стратегия обязана реализовать `detect_signals()` и задать атрибуты
+    класса `code`, `name`, `description`:
+
+    - `code` — уникальный идентификатор в реестре (`sma_crossover`);
+    - `name` — имя для UI;
+    - `description` — краткое описание.
+
+    Это атрибуты класса, а не свойства: реестр читает их без создания экземпляра
+    (раньше `get_available_strategies()` конструировал стратегию только чтобы
+    прочитать имя).
     """
+
+    code: ClassVar[str] = ""
+    name: ClassVar[str] = ""
+    description: ClassVar[str] = ""
 
     def __init__(self, timeframe: str, config: Dict = None, debug: bool = False):
         """
@@ -322,18 +330,6 @@ class BaseStrategy(ABC):
                 f"Unknown timeframe '{self.timeframe}': exit_time stays at candle open"
             )
             return None
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Имя стратегии для отображения в UI"""
-        pass
-
-    @property
-    @abstractmethod
-    def description(self) -> str:
-        """Описание стратегии"""
-        pass
 
     # ═══════════════════════════════════════════════════════════════════════
     # ОБЩИЕ МЕТОДЫ (реализованы для всех стратегий)

@@ -7,6 +7,16 @@
 
 ### Added
 
+- `src/strategies/_template/`: шаблон новой стратегии (`config.py`, `strategy.py`) с
+  готовым `detect_signals` и декоратором `@register_strategy` (T3-9). Пакеты с префиксом
+  `_` не попадают в реестр, поэтому шаблон не торгуется.
+- `tests/test_strategy_registry.py`: 9 тестов — автообнаружение, чтение имени из атрибутов
+  класса без создания экземпляра, отказ при пустом/дублирующемся `code`, идемпотентная
+  регистрация, изоляция `_template` (проверка в отдельном процессе), контракт шаблона.
+- `src/strategies/strategy_registry.py`: авторегистрация стратегий (T3-6, ADR-014).
+  `@register_strategy` на классе + ленивое обнаружение пакетов через `pkgutil`;
+  ручные импорты стратегий из реестра удалены. `get_available_strategies()` читает
+  `name` из атрибутов класса и больше не создаёт экземпляры стратегий.
 - `.github/workflows/ci.yml`: CI на push в `dev` и на PR в `dev`/`main` — `ruff`, `mypy`,
   `pytest` (T2-14, T5-2). Проверяется «чистый набор» (`CLEAN_SET`: `simulator.py`,
   `pending_recovery.py`, `tests/`), legacy-файлы добавляются по мере исправления (T1-7).

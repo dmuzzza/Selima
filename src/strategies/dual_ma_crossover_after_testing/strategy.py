@@ -21,12 +21,14 @@ from typing import List, Optional
 
 from src.market_data.models import Candle
 from src.strategies.base_strategy import BaseStrategy, Signal
+from src.strategies.strategy_registry import register_strategy
 
 from .config import get_config
 
 logger = logging.getLogger(__name__)
 
 
+@register_strategy
 class DualMACrossoverStrategy(BaseStrategy):
     """
     Стратегия пересечения SMA50 × MA Adaptive.
@@ -84,15 +86,9 @@ class DualMACrossoverStrategy(BaseStrategy):
     # СВОЙСТВА СТРАТЕГИИ
     # ═══════════════════════════════════════════════════════════════════════
 
-    @property
-    def name(self) -> str:
-        """Имя стратегии для UI"""
-        return "Dual MA Crossover"
-
-    @property
-    def description(self) -> str:
-        """Описание стратегии"""
-        return f"SMA{self.sma_period} × MA Adaptive({self.adaptive_period}) crossover strategy"
+    code = "dual_ma_crossover_after_testing"
+    name = "Dual MA Crossover"
+    description = "SMA × MA Adaptive crossover strategy"
 
     # ═══════════════════════════════════════════════════════════════════════
     # РАСЧЁТ ИНДИКАТОРОВ

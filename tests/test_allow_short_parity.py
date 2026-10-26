@@ -15,13 +15,9 @@ from src.strategies.strategy_registry import get_strategy_class
 class _BearishOnlyStrategy(BaseStrategy):
     """Emits a BEARISH signal on every candle: simplest allow_short probe."""
 
-    @property
-    def name(self) -> str:
-        return "Bearish Only"
-
-    @property
-    def description(self) -> str:
-        return "Test strategy: BEARISH signal on every candle"
+    code = "bearish_only"
+    name = "Bearish Only"
+    description = "Test strategy: BEARISH signal on every candle"
 
     def detect_signals(self, candles: list[Candle]) -> list[Signal]:
         signals = [

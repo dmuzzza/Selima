@@ -87,7 +87,7 @@ p_selima_v8.1/
 │   │
 │   ├── strategies/                    [C]
 │   │   ├── base_strategy.py           BaseStrategy, Signal, Trade, StrategyStats + PnL/комиссии/MFE/MAE
-│   │   ├── strategy_registry.py       STRATEGY_REGISTRY: code → class (2 стратегии, см. ADR-008)
+│   │   ├── strategy_registry.py       `@register_strategy` + ленивое автообнаружение пакетов (ADR-014)
 │   │   ├── strategy_factory.py        StrategyFactory.create(code, timeframe, config, debug)
 │   │   ├── indicators_builder.py      SMA/EMA/MA Adaptive/RSI/MACD/BB/ATR/Stochastic
 │   │   ├── indicators_config.py       периоды индикаторов
@@ -105,6 +105,7 @@ p_selima_v8.1/
 │   │   ├── simple_ma_strategy.py      [L] простой пример стратегии
 │   │   ├── mfi_bb_strategy.txt        [L] стратегия в виде текста, не кода
 │   │   ├── sma_crossover/             [C] пакет: config.py, strategy.py, signal_validator.py
+│   │   ├── _template/                 [C] шаблон новой стратегии: config.py, strategy.py (в реестр не попадает)
 │   │   └── dual_ma_crossover_after_testing/  [C] пакет: config.py (TP/SL по тикерам), strategy.py
 │   │
 │   ├── sma_crossover/                 [L] КОПИЯ src/strategies/sma_crossover/ (идентична)
@@ -437,6 +438,9 @@ PostgreSQL). Оставлен для legacy-скриптов и локальны
 1. ~~`src/strategies/strategy_registry.py:17-27` — 9 импортов несуществующих пакетов.~~
    **Исправлено (T0-1):** в реестре остались `sma_crossover` и
    `dual_ma_crossover_after_testing`, отсутствующие коды перечислены в TODO-комментарии.
+   **T3-6 (ADR-014):** ручные импорты убраны совсем — стратегии регистрируются
+   декоратором, реестр обнаруживает пакеты лениво; несуществующий пакет в списке
+   теперь невозможен.
 2. ~~`scheduler.py:33`, `scheduler_notifier.py:45` — импорт отсутствующего
    `src.strategies.dual_ma_crossover`.~~ **Исправлено (T0-3):** оба модуля импортируют
    существующий пакет `dual_ma_crossover_after_testing`. Импорт отсутствующего пакета

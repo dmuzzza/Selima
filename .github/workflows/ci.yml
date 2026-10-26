@@ -14,6 +14,8 @@ env:
   # add paths here as they are cleaned up, never remove them.
   CLEAN_SET: >-
     src/backtest/simulator.py
+    src/strategies/_template
+    src/strategies/strategy_registry.py
     src/trading/pending_recovery.py
     tests
 

@@ -12,6 +12,7 @@ from typing import List, Optional
 
 from src.market_data.models import Candle
 from src.strategies.base_strategy import BaseStrategy, Signal
+from src.strategies.strategy_registry import register_strategy
 from .signal_validator import create_default_validator, create_strict_validator, create_custom_validator
 
 from .config import get_config
@@ -19,6 +20,7 @@ from .config import get_config
 logger = logging.getLogger(__name__)
 
 
+@register_strategy
 class SMACrossoverStrategy(BaseStrategy):
     """
     Стратегия пересечения цены через SMA50.
@@ -95,15 +97,9 @@ class SMACrossoverStrategy(BaseStrategy):
     # СВОЙСТВА СТРАТЕГИИ
     # ═══════════════════════════════════════════════════════════════════════
 
-    @property
-    def name(self) -> str:
-        """Имя стратегии для UI"""
-        return "SMA Crossover"
-
-    @property
-    def description(self) -> str:
-        """Описание стратегии"""
-        return f"Price crossing SMA{self.sma_period} strategy"
+    code = "sma_crossover"
+    name = "SMA Crossover"
+    description = "Price crossing SMA strategy"
 
     # ═══════════════════════════════════════════════════════════════════════
     # РАСЧЁТ SMA

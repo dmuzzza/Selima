@@ -1,34 +1,84 @@
 """
-Strategy Registry V1
+Strategy Registry V2
 
-Реестр всех доступных торговых стратегий.
-Централизованное место для регистрации и получения стратегий.
+Стратегия регистрируется декоратором на своём классе:
+
+    @register_strategy
+    class MyStrategy(BaseStrategy):
+        code = "my_strategy"
+        name = "My Strategy"
+        description = "..."
+
+Правок в этом файле при добавлении стратегии не требуется: при первом обращении
+к реестру импортируются все пакеты внутри `src/strategies`, и каждый регистрирует
+себя как побочный эффект импорта. Пакеты с префиксом `_` пропускаются, поэтому
+шаблон `_template` в реестр не попадает.
+
+Обнаружение ленивое (при первом запросе): это убирает побочные эффекты импорта
+и разрывает циклический импорт — стратегии импортируют `register_strategy`
+отсюда, а этот модуль импортирует пакеты стратегий.
 
 ═══════════════════════════════════════════════════════════════════════════
 """
 
-from typing import Dict, Type
+import importlib
+import logging
+import pkgutil
+
 from src.strategies.base_strategy import BaseStrategy
 
+logger = logging.getLogger(__name__)
+
 # ═══════════════════════════════════════════════════════════════════════════
-# ИМПОРТЫ ВСЕХ СТРАТЕГИЙ
+# РЕЕСТР
 # ═══════════════════════════════════════════════════════════════════════════
 
-from src.strategies.sma_crossover.strategy import SMACrossoverStrategy
-from src.strategies.dual_ma_crossover_after_testing.strategy import (
-    DualMACrossoverStrategy as DualMACrossoverAfterTestingStrategy,
-)
+# Заполняется декораторами; пуст до первого обращения (ленивое обнаружение).
+STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {}
 
-# TODO(T0-1): restore remaining strategies when their packages are added back.
-# Planned codes: dual_ma_crossover, dual_ma_ma_crossover, dual_ma_crossover_adaptive,
-# candle_patterns, candle_patterns_2, macd_plus, macd_plus_2_update,
-# horizontal_levels, mfi_bb.
+_discovered = False
 
-# Реестр стратегий
-STRATEGY_REGISTRY: Dict[str, Type[BaseStrategy]] = {
-    "sma_crossover": SMACrossoverStrategy,
-    "dual_ma_crossover_after_testing": DualMACrossoverAfterTestingStrategy,
-}
+
+def register_strategy(cls: type[BaseStrategy]) -> type[BaseStrategy]:
+    """
+    Декоратор класса: добавить стратегию в реестр под её `code`.
+
+    Raises:
+        ValueError: пустой `code` или код уже занят другим классом.
+    """
+    code = getattr(cls, "code", "")
+    if not code:
+        raise ValueError(
+            f"{cls.__name__} must define a non-empty 'code' class attribute"
+        )
+
+    existing = STRATEGY_REGISTRY.get(code)
+    if existing is not None and existing is not cls:
+        raise ValueError(
+            f"Strategy code '{code}' is already registered by {existing.__name__}"
+        )
+
+    STRATEGY_REGISTRY[code] = cls
+    logger.debug(f"Registered strategy '{code}' -> {cls.__name__}")
+    return cls
+
+
+def _discover_strategies() -> None:
+    """Импортировать все пакеты стратегий, чтобы сработали декораторы."""
+    package = importlib.import_module("src.strategies")
+    for module_info in pkgutil.iter_modules(package.__path__):
+        if not module_info.ispkg or module_info.name.startswith("_"):
+            continue
+        importlib.import_module(f"{package.__name__}.{module_info.name}")
+
+
+def _ensure_discovered() -> None:
+    """Выполнить обнаружение один раз (защита от повторного входа)."""
+    global _discovered
+    if _discovered:
+        return
+    _discovered = True
+    _discover_strategies()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -36,78 +86,54 @@ STRATEGY_REGISTRY: Dict[str, Type[BaseStrategy]] = {
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def get_available_strategies() -> Dict[str, str]:
+def get_available_strategies() -> dict[str, str]:
     """
     Получить список доступных стратегий для UI.
-    
+
+    Экземпляры не создаются: `code` и `name` — атрибуты класса.
+
     Returns:
         Dict: {код_стратегии: название_стратегии}
-    
-    Example:
-        >>> strategies = get_available_strategies()
-        >>> # {"sma_crossover": "SMA Crossover", "dual_ma": "Dual MA Crossover"}
     """
-    result = {}
-    for code, strategy_class in STRATEGY_REGISTRY.items():
-        try:
-            # Создаём временный экземпляр для получения имени
-            instance = strategy_class(timeframe="1h")
-            result[code] = instance.name
-        except Exception as e:
-            print(f"Warning: Failed to get name for strategy '{code}': {e}")
-            result[code] = code  # Fallback к коду
-    
-    return result
+    _ensure_discovered()
+    return {
+        code: (strategy_class.name or code)
+        for code, strategy_class in STRATEGY_REGISTRY.items()
+    }
 
 
-def get_strategy_class(strategy_code: str) -> Type[BaseStrategy]:
+def get_strategy_class(strategy_code: str) -> type[BaseStrategy]:
     """
     Получить класс стратегии по коду.
-    
+
     Args:
         strategy_code: Код стратегии (e.g., "sma_crossover")
-    
+
     Returns:
         Type[BaseStrategy]: Класс стратегии
-    
+
     Raises:
         ValueError: Если стратегия не найдена
     """
+    _ensure_discovered()
     if strategy_code not in STRATEGY_REGISTRY:
-        available = ", ".join(STRATEGY_REGISTRY.keys())
+        available = ", ".join(sorted(STRATEGY_REGISTRY))
         raise ValueError(
             f"Unknown strategy: '{strategy_code}'. "
             f"Available strategies: {available}"
         )
-    
+
     return STRATEGY_REGISTRY[strategy_code]
 
 
-def register_strategy(code: str, strategy_class: Type[BaseStrategy]) -> None:
-    """
-    Зарегистрировать новую стратегию в реестре.
-    
-    Args:
-        code: Уникальный код стратегии
-        strategy_class: Класс стратегии (наследник BaseStrategy)
-    """
-    if code in STRATEGY_REGISTRY:
-        print(f"Warning: Strategy '{code}' already registered. Overwriting...")
-    
-    STRATEGY_REGISTRY[code] = strategy_class
-    print(f"✓ Strategy '{code}' registered successfully")
-
-
 def list_strategies() -> None:
-    """
-    Вывести список всех зарегистрированных стратегий.
-    """
+    """Залогировать список всех зарегистрированных стратегий."""
     strategies = get_available_strategies()
-    
+
     if not strategies:
-        print("No strategies registered yet.")
+        logger.info("No strategies registered yet.")
         return
-    
-    print("Available strategies:")
+
+    logger.info("Available strategies:")
     for code, name in strategies.items():
-        print(f"  - {code}: {name}")
+        logger.info(f"  - {code}: {name}")
