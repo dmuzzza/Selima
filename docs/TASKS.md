@@ -115,7 +115,8 @@ ImportError; в логах нет токенов и `account_id`.
 | T3-2 | Добавить в `BaseStrategy` дефолтные `check_last_signal()` и `execute_live_trades()`, удалить копии из стратегий | M | done |
 | T3-3 | Вынести цикл TP/SL в `src/backtest/simulator.py` (`TradeSimulator`, `ExitRules`, `SizingRules`, `CostModel`); стратегии вызывают движок | L | done (движок + `BaseStrategy.execute_trades`; `CostModel` остался в `BaseStrategy._calculate_commissions`) |
 | T3-4 | Ввести `ExitPolicy` (протокол) + реализацию `PercentExitPolicy`; перенести TP/SL по тикерам в конфиг | M | todo |
-| T3-5 | Исправить модель исполнения в симуляторе: `position_size_percent`, несколько позиций, порядок TP/SL по фактическому касанию, гэпы, `exit_time` | M | todo |
+| T3-5 | Исправить модель исполнения в симуляторе: `position_size_percent`, несколько позиций, порядок TP/SL по фактическому касанию, гэпы, `exit_time` | M | done (T3-5a/b/c: SL-first, гэпы по `open`, `exit_time` = конец бара; ADR-012) |
+| T3-5d | Несколько позиций одновременно (сейчас одна на инструмент) | L | todo |
 | T3-6 | Ввести `code`/`name`/`description` как атрибуты класса; реестр — через декоратор `@register_strategy` (убрать ручные импорты) | S | todo |
 | T3-7 | Унифицировать `Trade` (бэктест) и `LiveTrade` (live): общий `TradeRecord` или явный маппер `to_live_trade()` | M | todo |
 | T3-8 | Тест-паритет: `detect_signals(...)[-1]` == `check_last_signal(...)` на N инструментах и таймфреймах | M | todo |
@@ -124,6 +125,11 @@ ImportError; в логах нет токенов и `account_id`.
 
 **Приёмка T3:** новая стратегия = 2 файла + строка регистрации; `pytest` содержит
 тест-паритет; бэктест и live используют один и тот же `ExitRules`.
+
+Проверено после T3-5: `scripts/pnl_baseline.py` — 44 инструмента × 1h/4h/1d = 132
+прогона, 1940 сделок. Детерминизм подтверждён (два снимка совпали побайтово по хешам).
+PnL по шагам: 327 803.20 → 291 905.42 (SL-first) → 292 815.68 (гэпы) → 283 251.31
+(`exit_time`). Число сделок не менялось — правки касались только выходов.
 
 ---
 
@@ -144,7 +150,7 @@ ImportError; в логах нет токенов и `account_id`.
 
 | ID | Задача | Приоритет | Статус |
 |---|---|---|---|
-| T5-1 | `tests/` + pytest: `BaseStrategy.calculate_stats`, `TradeSimulator`, `PositionManager` (моки), стратегии на синтетике | P0 | in-progress (контракт стратегий покрыт) |
+| T5-1 | `tests/` + pytest: `BaseStrategy.calculate_stats`, `TradeSimulator`, `PositionManager` (моки), стратегии на синтетике | P0 | in-progress (47 тестов: контракт стратегий, `TradeSimulator` включая модель исполнения, режим торговли, `signal_key`, `allow_short`) |
 | T5-2 | GitHub Actions: ruff + mypy + pytest | P1 | todo |
 | T5-3 | Dockerfile (multi-stage, `python:3.12-slim`, non-root, healthcheck) | P1 | todo |
 | T5-4 | docker-compose: app + postgres для локальной разработки | P1 | todo |

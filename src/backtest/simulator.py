@@ -8,15 +8,17 @@ Known limitations, kept as-is to preserve historical backtest results and to be
 addressed separately (T3-5):
 
 - one position at a time (no pyramiding, no parallel positions);
-- TP is checked before SL within the same candle, which is optimistic when both
-  levels are touched;
-- exit time is the open time of the candle that triggered the exit, not the
-  moment the level was actually touched;
-- no slippage and no gap handling (exit is always at the exact level).
+- when a single candle touches both TP and SL, SL wins (pessimistic assumption:
+  the intrabar order of events is unknown, so the worse outcome is reported);
+- exit time is the close of the candle that triggered the exit (open time plus
+  `bar_duration`), not the moment the level was actually touched;
+- gaps are handled at the candle open only: if the candle opens beyond a level,
+  the fill is the open price, not the level; intrabar slippage is not modelled.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 
 from src.market_data.models import Candle
 from src.strategies.base_strategy import Signal, Trade
@@ -68,6 +70,7 @@ class TradeSimulator:
         on_close: CloseHandler,
         entry_filter: EntryFilter | None = None,
         allow_short: bool = True,
+        bar_duration: timedelta | None = None,
         logger=None,
         debug: bool = False,
     ) -> None:
@@ -76,6 +79,9 @@ class TradeSimulator:
         self.on_close = on_close
         self.entry_filter = entry_filter
         self.allow_short = allow_short
+        # Duration of one candle: exit_time is reported as the close of the bar
+        # that triggered the exit. None keeps the raw candle open time.
+        self.bar_duration = bar_duration
         self.logger = logger
         self.debug = debug
 
@@ -105,22 +111,13 @@ class TradeSimulator:
         return trades
 
     def _try_exit(self, trade: Trade, candle: Candle, candle_idx: int, balance: float) -> bool:
-        """Close the trade if TP or SL was touched by this candle."""
-        if trade.is_long():
-            hit_tp = candle.high >= trade.tp_level
-            hit_sl = candle.low <= trade.sl_level
-        else:
-            hit_tp = candle.low <= trade.tp_level
-            hit_sl = candle.high >= trade.sl_level
-
-        if hit_tp:
-            exit_type, exit_price = "TP", trade.tp_level
-        elif hit_sl:
-            exit_type, exit_price = "SL", trade.sl_level
-        else:
+        """Close the trade if TP or SL was reached by this candle."""
+        exit = self._detect_exit(trade, candle)
+        if exit is None:
             return False
 
-        trade.exit_time = candle.open_time
+        exit_type, exit_price = exit
+        trade.exit_time = self._exit_time(candle)
         trade.exit_index = candle_idx
         trade.exit_price = exit_price
         trade.exit_type = exit_type
@@ -129,6 +126,55 @@ class TradeSimulator:
         if self.debug and self.logger:
             self.logger.debug(f"→ {trade} | Balance: {balance + (trade.pnl_abs or 0.0):.2f}")
         return True
+
+    def _exit_time(self, candle: Candle):
+        """Exit timestamp: the close of the bar that triggered the exit.
+
+        OHLC data does not tell when inside the bar the level was reached, so the
+        end of the bar is used (conservative: hold time is never understated).
+        """
+        if self.bar_duration is None:
+            return candle.open_time
+        return candle.open_time + self.bar_duration
+
+    def _detect_exit(self, trade: Trade, candle: Candle) -> tuple[str, float] | None:
+        """Return (exit_type, exit_price) if the candle closed the trade.
+
+        Two cases are distinguished:
+
+        1. Gap: the candle opened beyond a level. That level was never traded,
+           so the fill is the open price (worse than the level for SL, better
+           for TP). SL is checked first to stay pessimistic.
+        2. Intrabar touch: the level was reached inside the candle. When both
+           levels are reached, SL wins because the intrabar order is unknown.
+        """
+        is_long = trade.is_long()
+
+        # 1. Gap at the candle open
+        if is_long:
+            if candle.open <= trade.sl_level:
+                return "SL", candle.open
+            if candle.open >= trade.tp_level:
+                return "TP", candle.open
+        else:
+            if candle.open >= trade.sl_level:
+                return "SL", candle.open
+            if candle.open <= trade.tp_level:
+                return "TP", candle.open
+
+        # 2. Intrabar touch
+        if is_long:
+            hit_tp = candle.high >= trade.tp_level
+            hit_sl = candle.low <= trade.sl_level
+        else:
+            hit_tp = candle.low <= trade.tp_level
+            hit_sl = candle.high >= trade.sl_level
+
+        if hit_sl:
+            return "SL", trade.sl_level
+        if hit_tp:
+            return "TP", trade.tp_level
+        return None
 
     def _try_entry(
         self,

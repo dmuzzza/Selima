@@ -27,7 +27,7 @@ import math
 import statistics
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from config.commissions import (
     COMMISSION_MODE,
@@ -293,6 +293,7 @@ class BaseStrategy(ABC):
             on_close=self._calculate_pnl,
             entry_filter=self.entry_filter,
             allow_short=self.allow_short,
+            bar_duration=self._bar_duration(),
             logger=self.logger,
             debug=self.debug,
         )
@@ -303,6 +304,24 @@ class BaseStrategy(ABC):
         closed = len([t for t in trades if not t.is_open()])
         self.logger.info(f"Executed {len(trades)} trades ({closed} closed)")
         return trades
+
+    def _bar_duration(self) -> Optional[timedelta]:
+        """
+        Длительность одной свечи таймфрейма стратегии.
+
+        Нужна симулятору, чтобы записать `exit_time` как конец бара, в котором
+        сработал TP/SL (внутрибарное время из OHLC неизвестно). Для неизвестного
+        таймфрейма возвращается None — симулятор оставит время открытия свечи.
+        """
+        from src.market_data.timeframe import Timeframe
+
+        try:
+            return Timeframe(self.timeframe).to_timedelta
+        except ValueError:
+            self.logger.warning(
+                f"Unknown timeframe '{self.timeframe}': exit_time stays at candle open"
+            )
+            return None
 
     @property
     @abstractmethod

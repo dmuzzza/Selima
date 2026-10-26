@@ -134,6 +134,7 @@ p_selima_v8.1/
 │   ├── analytics/strategy_analyzer.py [C] метрики, интерпретация, отчёт по результату стратегии
 │   ├── backtest/
 │   │   ├── simulator.py               [C] TradeSimulator, ExitRules, SizingRules — единый цикл TP/SL
+│   │   │                                  (SL-first, гэпы по open, exit_time = конец бара, ADR-012)
 │   │   └── backtester.py              [L] отдельный движок бэктеста (не используется стратегиями)
 │   ├── storage/models.py              [L] устаревшая ORM-модель "marketdata"
 │   └── utils/
@@ -158,7 +159,8 @@ p_selima_v8.1/
 ├── migrations/                        [T] ручные миграции (SQLite: add_hash, lot_size, position_id,
 │                                          stop_orders, constraint; PostgreSQL: add_signal_key)
 ├── scripts/                           [T] экспорт сделок/свечей, отчёт, top10 по объёму,
-│                                          таблица FIGI, проверка constraint
+│                                          таблица FIGI, проверка constraint,
+│                                          pnl_baseline.py (baseline PnL до/после правок движка)
 ├── optimization/                      [T] grid_tp_sl_dual_ma.py, optimize_macd_plus.py,
 │                                          _check_db.py, tz_ml_optimization.md (ТЗ на ML)
 ├── debug/                             [T] debug_margin.py, debug_instrument.py
@@ -285,6 +287,15 @@ sequenceDiagram
 стратегии. Критерии входа — `detect_signals()` плюс `entry_filter()` (хук на свече
 исполнения). `allow_short` соблюдается всеми тремя путями: симуляцией,
 `check_last_signal()` и `execute_live_trades()`.
+
+Модель исполнения (ADR-012) — пессимистичная там, где OHLC не даёт ответа:
+
+| Ситуация | Правило |
+|---|---|
+| свеча задела TP и SL | исполняется SL |
+| свеча открылась за уровнем SL | выход по `open` (хуже уровня) |
+| свеча открылась за уровнем TP | выход по `open` (лучше уровня) |
+| время выхода | конец бара (`open_time + bar_duration`) |
 
 Используются разные модели: `Trade` (симуляция) и `LiveTrade` (реальная торговля),
 см. `docs/STRATEGY_CONTRACT.md`.
@@ -442,10 +453,10 @@ PostgreSQL). Оставлен для legacy-скриптов и локальны
     (`position_size_percent` игнорируется), одна позиция одновременно, `exit_time`
     равен `candle.open_time` (время выхода некорректно), TP и SL проверяются в одной
     свече без приоритета «что раньше» (всегда TP первым — оптимистично).~~
-    **Частично исправлено (T3-3, ADR-011):** цикл вынесен в `TradeSimulator`,
-    `position_size_percent` учитывается. Осталось осознанно (T3-5): одна позиция
-    одновременно, `exit_time` = `candle.open_time`, TP проверяется раньше SL,
-    нет проскальзывания и гэпов.
+    **Исправлено (T3-3, T3-5, ADR-011, ADR-012):** цикл вынесен в `TradeSimulator`,
+    `position_size_percent` учитывается, при касании обоих уровней исполняется SL,
+    гэп исполняется по `open`, `exit_time` — конец бара. Осталось (T3-5d, T2-7):
+    одна позиция одновременно, нет проскальзывания внутри бара.
 10a. ~~`dual_ma_crossover_after_testing`: фильтр `max_adaptive_deviation_percent`
     применяется только в `execute_trades`, поэтому live может открыть сделку, которую
     бэктест отклоняет.~~ **Частично исправлено (T3-3):** фильтры вынесены в

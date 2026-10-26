@@ -6,15 +6,16 @@
 
 ## Статус
 
-**Блокеры запуска закрыты (T0):** `import scheduler` проходит, `pytest tests` — 14 passed,
-реестр стратегий содержит только существующие пакеты (`sma_crossover`,
-`dual_ma_crossover_after_testing`).
+**Закрыты:** блокеры запуска (T0), безопасность режима торговли (T4-1/2/5),
+единый движок бэктеста (T2-1/T3-3), модель исполнения симулятора (T3-5),
+идемпотентность live-сигналов (T2-5/T2-6). `pytest` — 47 passed.
+Репозиторий: `https://github.com/dmuzzza/Selima.git`, рабочая ветка `dev`.
 
 Что ещё не сделано:
 
-- нет git-репозитория и CI, нет `Dockerfile` / `docker-compose.yml` (T5-2, T5-3, T5-4, T5-6);
-- не закрыты P0-риски реальной торговли: единый движок бэктеста (T2-1),
-  walk-forward вместо подбора TP/SL на всей истории (T2-8);
+- нет CI и `Dockerfile` / `docker-compose.yml` (T5-2, T5-3, T5-4, T2-14, T2-15);
+- не закрыты P0-риски реальной торговли: walk-forward вместо подбора TP/SL на всей
+  истории (T2-8), дозакрытие зависших PENDING после падения процесса (хвост T2-6);
 - legacy-мусор в структуре: `src/sma_crossover/`, `app_dashboard.py`, одноразовые скрипты
   в корне (T1-2, T1-3).
 
@@ -27,7 +28,7 @@
 |---|---|
 | Загрузка свечей (30m/1h/4h/1d/1w) в PostgreSQL, инкрементально | `src/market_data/` |
 | Торговые стратегии с единым интерфейсом | `src/strategies/` |
-| Бэктест (TP/SL, комиссии, MFE/MAE, метрики) | `src/strategies/base_strategy.py` |
+| Бэктест (TP/SL, гэпы, комиссии, MFE/MAE, метрики) | `src/backtest/simulator.py`, `src/strategies/base_strategy.py` |
 | Аналитика результата стратегии | `src/analytics/` |
 | Live-торговля: расчёт лота, маркет-ордер, TP/SL | `src/brokers/`, `src/trading/` |
 | Сверка состояния с биржей, закрытие сделок | `src/trading/reconciler.py` |
@@ -125,6 +126,7 @@ p_selima_v8.1/
 | Только сигналы + VK | `uv run python scheduler_notifier.py` |
 | Загрузка истории | `uv run python reload_data_v2.py` |
 | Миграция БД (signal_key) | `uv run python migrations/migrate_add_signal_key.py` |
+| Baseline PnL бэктеста (до/после правок движка) | `uv run python scripts/pnl_baseline.py --tag before` |
 | Тесты | `uv run pytest` |
 | Линтер / типы | `uv run ruff check .` / `uv run mypy src` |
 

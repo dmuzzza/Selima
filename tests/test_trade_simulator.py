@@ -214,6 +214,118 @@ def test_position_size_percent():
     assert trades[0].quantity == pytest.approx(250.0)
 
 
+def test_long_stop_loss_wins_when_candle_touches_both_levels():
+    """Same candle touches TP and SL: the pessimistic outcome (SL) is reported."""
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 101.0, 99.5, 100.5),
+        (100.5, 112.0, 90.0, 91.0),  # high 112 >= tp 110, low 90 <= sl 95
+    ])
+    trades = run(candles, [signal(0)], tp=10.0, sl=5.0)
+
+    assert trades[0].exit_type == "SL"
+    assert trades[0].exit_price == pytest.approx(95.0)
+    assert trades[0].pnl_abs < 0
+
+
+def test_short_stop_loss_wins_when_candle_touches_both_levels():
+    """Mirror case for SHORT: SL at 105 and TP at 90 inside one candle."""
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 100.5, 99.5, 100.0),
+        (100.0, 110.0, 85.0, 109.0),  # high 110 >= sl 105, low 85 <= tp 90
+    ])
+    trades = run(candles, [signal(0, "BEARISH")], tp=10.0, sl=5.0)
+
+    assert trades[0].exit_type == "SL"
+    assert trades[0].exit_price == pytest.approx(105.0)
+    assert trades[0].pnl_abs < 0
+
+
+def test_long_gap_down_fills_stop_at_open():
+    """Candle opens below SL: the level was never traded, fill is the open."""
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 101.0, 99.5, 100.5),
+        (90.0, 92.0, 88.0, 91.0),  # opens at 90, below SL 95
+    ])
+    trades = run(candles, [signal(0)], tp=10.0, sl=5.0)
+
+    assert trades[0].exit_type == "SL"
+    assert trades[0].exit_price == pytest.approx(90.0)
+    assert trades[0].pnl_abs < 0
+
+
+def test_long_gap_up_fills_take_profit_at_open():
+    """Candle opens above TP: fill is the open, which is better than the level."""
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 101.0, 99.5, 100.5),
+        (115.0, 118.0, 114.0, 117.0),  # opens at 115, above TP 110
+    ])
+    trades = run(candles, [signal(0)], tp=10.0, sl=5.0)
+
+    assert trades[0].exit_type == "TP"
+    assert trades[0].exit_price == pytest.approx(115.0)
+
+
+def test_short_gap_up_fills_stop_at_open():
+    """Mirror case: SHORT candle opens above SL."""
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 100.5, 99.5, 100.0),
+        (110.0, 112.0, 109.0, 111.0),  # opens at 110, above SL 105
+    ])
+    trades = run(candles, [signal(0, "BEARISH")], tp=10.0, sl=5.0)
+
+    assert trades[0].exit_type == "SL"
+    assert trades[0].exit_price == pytest.approx(110.0)
+    assert trades[0].pnl_abs < 0
+
+
+def test_short_gap_down_fills_take_profit_at_open():
+    """Mirror case: SHORT candle opens below TP."""
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 100.5, 99.5, 100.0),
+        (85.0, 86.0, 84.0, 85.5),  # opens at 85, below TP 90
+    ])
+    trades = run(candles, [signal(0, "BEARISH")], tp=10.0, sl=5.0)
+
+    assert trades[0].exit_type == "TP"
+    assert trades[0].exit_price == pytest.approx(85.0)
+
+
+def test_exit_time_is_the_close_of_the_bar_by_default():
+    """Without bar_duration the raw candle open time is kept (legacy behaviour)."""
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 101.0, 99.5, 100.5),
+        (100.5, 112.0, 100.0, 111.0),
+    ])
+    trades = run(candles, [signal(0)], tp=10.0, sl=5.0)
+
+    assert trades[0].exit_time == candles[2].open_time
+
+
+def test_exit_time_is_bar_close_when_bar_duration_is_given():
+    """Exit is reported at the end of the bar that triggered it, not at its open."""
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 101.0, 99.5, 100.5),
+        (100.5, 112.0, 100.0, 111.0),
+    ])
+    simulator = TradeSimulator(
+        exit_rules=ExitRules(tp_percent=10.0, sl_percent=5.0),
+        sizing=SizingRules(initial_balance=1000.0, position_size_percent=100.0),
+        on_close=simple_pnl,
+        bar_duration=timedelta(hours=1),
+    )
+    trades = simulator.run(candles, [signal(0)])
+
+    assert trades[0].exit_time == candles[2].open_time + timedelta(hours=1)
+
+
 def test_exit_rules_levels():
     rules = ExitRules(tp_percent=2.0, sl_percent=1.0)
 

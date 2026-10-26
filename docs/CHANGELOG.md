@@ -13,6 +13,8 @@
   и значения индикаторов); `BaseStrategy.execute_trades()` стал общей реализацией.
 - `tests/test_trade_simulator.py`: 13 тестов движка (вход по open следующей свечи,
   TP/SL для LONG и SHORT, одна позиция, `position_size_percent`, `entry_filter`).
+  Добавлены 8 тестов модели исполнения (T3-5): SL-first в одной свече для LONG и SHORT,
+  гэпы через SL/TP в обе стороны, `exit_time` = конец бара.
 - `tests/test_allow_short_parity.py`: 7 тестов паритета backtest/live по `allow_short`.
 - Идемпотентность live-сигналов (T2-5): `build_signal_key()` в
   `src/trading/models.py`, колонка `live_trades.signal_key` + частичный уникальный
@@ -21,6 +23,10 @@
 - `migrations/migrate_add_signal_key.py`: идемпотентная миграция PostgreSQL.
 - `tests/test_signal_idempotency.py`: 5 тестов (стабильность ключа, микросекунды,
   различие по свече/таймфрейму/направлению, повторный сигнал не создаёт сделку).
+- `scripts/pnl_baseline.py`: воспроизводимый baseline PnL — прогон стратегии по всем
+  инструментам/таймфреймам из PostgreSQL, JSON-снимок с хешем сделок в `debug/`
+  (в `.gitignore`) и режим `--compare before after` для диффа до/после правок движка.
+  Свечи читаются только из БД, обращения к брокеру нет.
 - Репозиторий инициализирован (`https://github.com/dmuzzza/Selima.git`), рабочая ветка
   `dev` создана от `origin/main`; первый коммит — состояние проекта p_selima_v8.1.
 - `.gitattributes`: LF в репозитории и рабочей копии, бинарные типы для `.whl`/`.xlsx`/изображений.
@@ -85,6 +91,15 @@
 
 ### Changed
 
+- **Модель исполнения `TradeSimulator` (T3-5, ADR-012).** Бэктест больше не завышает
+  результат: при касании TP и SL в одной свече исполняется SL; при гэпе (свеча открылась
+  за уровнем) выход считается по `open`; `exit_time` — конец бара, а не его открытие.
+  Исторические результаты изменились: суммарный PnL по 132 прогонам
+  327 803.20 → 283 251.31 ₽ (−13.6%), число сделок не изменилось. Время удержания
+  выросло на длительность бара, поэтому маржинальная комиссия считается точнее
+  (на `1d` это +1 день к каждой сделке).
+- `TradeSimulator.__init__` принимает `bar_duration: timedelta | None`;
+  `BaseStrategy.execute_trades()` передаёт длительность бара из `Timeframe`.
 - `sma_crossover`, `dual_ma_crossover_after_testing`: удалены собственные
   `execute_trades()` (~130 строк каждая). Логика входа вынесена в `entry_filter()`,
   выход считает `TradeSimulator`.
