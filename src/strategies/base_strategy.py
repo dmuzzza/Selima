@@ -32,7 +32,8 @@ from typing import ClassVar, Dict, List, Optional
 from config import commissions as commissions_config
 from config.commissions import (
     TRANSACTION_COMMISSION_PERCENT,
-    calculate_daily_margin_fee,
+    calculate_margin_fee,
+    margin_nights,
 )
 from src.market_data.models import Candle
 
@@ -614,12 +615,14 @@ class BaseStrategy(ABC):
         self.logger.info(f"\n{stats}")
         return stats
 
-    def _calculate_commissions(self, trade: Trade) -> None:
+    def _calculate_commissions(self, trade: Trade, own_funds: float | None = None) -> None:
         """
         Рассчитать все комиссии для сделки.
 
         Транзакционная комиссия: 0.05% за открытие + 0.05% за закрытие
-        Маржинальная комиссия: по дням удержания (календарные)
+        Маржинальная комиссия: только за перенос НЕПОКРЫТОЙ позиции
+        (позиция минус собственные средства), только если она больше
+        MARGIN_MIN_UNCOVERED и только за дни переноса (ADR-018).
 
         Режим применения регулируется через config/commissions.py → COMMISSION_MODE:
             "ALL"        — на все сделки
@@ -629,6 +632,9 @@ class BaseStrategy(ABC):
 
         Args:
             trade: Торговая сделка
+            own_funds: Собственные средства на момент входа (баланс). Если не
+                передан, считается, что позиция полностью покрыта, и плата за
+                перенос не начисляется.
         """
         commission_mode = commissions_config.COMMISSION_MODE
         # Проверка режима комиссий
@@ -663,13 +669,15 @@ class BaseStrategy(ABC):
         else:
             trade.commission_close = 0.0
         
-        # Маржинальная комиссия (по дням)
+        # Маржинальная комиссия: только непокрытая часть и только за перенос
         if trade.exit_time:
-            days_held = (trade.exit_time - trade.entry_time).days
-            # Минимум 1 день, если сделка закрыта
-            days_held = max(1, days_held)
-            daily_fee = calculate_daily_margin_fee(trade.quantity)
-            trade.commission_margin = daily_fee * days_held
+            nights = margin_nights(trade.entry_time, trade.exit_time)
+            trade.commission_margin = calculate_margin_fee(
+                trade.quantity,
+                own_funds if own_funds is not None else trade.quantity,
+                nights,
+                is_short=trade.is_short(),
+            )
         else:
             trade.commission_margin = 0.0
         
@@ -697,7 +705,7 @@ class BaseStrategy(ABC):
         if trade.exit_price is None:
             return
 
-        self._calculate_commissions(trade)
+        self._calculate_commissions(trade, own_funds=current_balance)
 
         direction = 1.0 if trade.is_long() else -1.0
         quantity = trade.quantity / trade.entry_price

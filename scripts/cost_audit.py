@@ -44,7 +44,8 @@ if str(ROOT) not in sys.path:
 
 from config.commissions import (  # noqa: E402
     TRANSACTION_COMMISSION_PERCENT,
-    calculate_daily_margin_fee,
+    calculate_margin_fee,
+    margin_nights,
 )
 
 DEFAULT_INITIAL_BALANCE = 50_000.0
@@ -92,10 +93,19 @@ class Run:
     costs_label: str = "GROSS"
     commission_mode: str = "SHORT_ONLY"
     levels_from_fill: bool = False
+    reported_total: float | None = None
+    # Margin model of the snapshot, not of this process: a replay must use the
+    # same assumption the run was produced with (ADR-018).
+    short_uncovered: bool | None = None
 
     @property
     def total_pnl(self) -> float:
         return sum(t.pnl_net for t in self.trades)
+
+    @property
+    def recomputed_pnl(self) -> float:
+        """Net PnL rebuilt from the layers, independent of the fingerprint."""
+        return sum(t.pnl_after_market - t.commission - t.margin for t in self.trades)
 
 
 def _parse_time(raw: str) -> datetime | None:
@@ -149,6 +159,8 @@ def _commission(
     exit_time: datetime | None,
     is_long: bool,
     mode: str,
+    own_funds: float | None = None,
+    short_uncovered: bool | None = None,
 ) -> tuple[float, float]:
     """Transaction and margin commission, mirroring BaseStrategy._calculate_commissions."""
     if mode == "NONE":
@@ -164,8 +176,13 @@ def _commission(
         commission += quantity * (exit_price / entry_price) * rate
     margin = 0.0
     if exit_time is not None:
-        days = max(1, (exit_time - entry_time).days)
-        margin = calculate_daily_margin_fee(quantity) * days
+        margin = calculate_margin_fee(
+            quantity,
+            own_funds if own_funds is not None else quantity,
+            margin_nights(entry_time, exit_time),
+            is_short=not is_long,
+            short_uncovered=short_uncovered,
+        )
     return commission, margin
 
 
@@ -178,9 +195,18 @@ def replay(snapshot_path: Path, label: str) -> Run:
     run.costs_label = costs.get("label", "GROSS")
     run.commission_mode = costs.get("commission_mode", "SHORT_ONLY")
     run.levels_from_fill = bool(run_info.get("levels_from_fill", False))
+    # The snapshot states its margin model; falling back to the process default
+    # would silently attribute a different model than the one that ran (ADR-018).
+    run.short_uncovered = payload.get("commissions", {}).get("margin_short_uncovered")
     run.offset_bps, run.offset_abs = _market_offset(costs)
+    run.reported_total = run_info.get("total_pnl")
+    # Sizing rules come from the snapshot; the defaults only serve old files.
+    initial_balance = float(run_info.get("initial_balance", DEFAULT_INITIAL_BALANCE))
+    size_percent = float(
+        run_info.get("position_size_percent", DEFAULT_POSITION_SIZE_PERCENT)
+    )
 
-    balance = DEFAULT_INITIAL_BALANCE
+    balance = initial_balance
     for raw in run_info.get("trade_list", []):
         (
             entry_time,
@@ -191,7 +217,7 @@ def replay(snapshot_path: Path, label: str) -> Run:
             exit_price,
             pnl_net,
         ) = parse_fingerprint(raw)
-        quantity = balance * DEFAULT_POSITION_SIZE_PERCENT / 100.0
+        quantity = balance * size_percent / 100.0
 
         row = TradeRow(
             entry_time=entry_time,
@@ -222,14 +248,36 @@ def replay(snapshot_path: Path, label: str) -> Run:
             # With `levels_from_fill` the same offset moves TP/SL as well.
             row.level_shift_bps = row.entry_offset_bps if run.levels_from_fill else 0.0
 
-            # Raw prices: undo the market offset the engine applied to the fills.
-            raw_entry = entry_price - offset_abs if is_long else entry_price + offset_abs
-            if exit_type in LIMIT_EXIT_TYPES:
-                raw_exit = exit_price
-                exit_offset = 0.0
+            # Raw prices: invert the market offset the engine applied to the fills.
+            # The bps offset is proportional to price, so inversion is a division,
+            # not a subtraction: entry = open * (1 + o)  ->  open = entry / (1 + o).
+            # A subtraction leaves a second-order residual (~4 RUB per 52 trades)
+            # that would show up as a fake "price" effect.
+            if run.offset_abs is not None:
+                raw_entry = entry_price - offset_abs if is_long else entry_price + offset_abs
+                raw_exit = (
+                    exit_price
+                    if exit_type in LIMIT_EXIT_TYPES
+                    else (exit_price + offset_abs if is_long else exit_price - offset_abs)
+                )
             else:
-                raw_exit = exit_price + offset_abs if is_long else exit_price - offset_abs
-                exit_offset = offset_abs
+                raw_entry = (
+                    entry_price / (1.0 + run.offset_bps / 10_000.0)
+                    if is_long
+                    else entry_price / (1.0 - run.offset_bps / 10_000.0)
+                )
+                raw_exit = exit_price
+                if exit_type not in LIMIT_EXIT_TYPES:
+                    raw_exit = (
+                        exit_price / (1.0 - run.offset_bps / 10_000.0)
+                        if is_long
+                        else exit_price / (1.0 + run.offset_bps / 10_000.0)
+                    )
+            exit_offset = (
+                0.0
+                if exit_type in LIMIT_EXIT_TYPES
+                else abs(raw_exit - exit_price)
+            )
 
             direction = 1.0 if is_long else -1.0
             row.pnl_price = quantity / raw_entry * (raw_exit - raw_entry) * direction
@@ -246,6 +294,8 @@ def replay(snapshot_path: Path, label: str) -> Run:
                 exit_time,
                 is_long,
                 run.commission_mode,
+                own_funds=balance,
+                short_uncovered=run.short_uncovered,
             )
             row.commission = commission
             row.margin = margin
@@ -272,6 +322,25 @@ def _print_totals(run: Run) -> None:
             f"  expectancy         {run.total_pnl / len(closed):>12.2f} RUB/trade "
             f"({sum(t.pnl_bps for t in closed) / len(closed):.2f} bps)"
         )
+        if any(t.quantity <= 0 for t in closed):
+            print(
+                "  WARNING            balance went negative: position size and bps "
+                "per trade are not meaningful (no bankruptcy rule in the engine)"
+            )
+    if run.reported_total is not None:
+        drift = run.total_pnl - run.reported_total
+        flag = "" if abs(drift) < 0.01 else "  <-- MISMATCH"
+        print(f"  snapshot total     {run.reported_total:>12.2f} (drift {drift:+.2f}){flag}")
+        # The fingerprint sum is trivially equal to itself; the layers must also
+        # rebuild the same net, otherwise the audit and the engine disagree about
+        # the commission model (this is how a wrong margin mode would hide).
+        rebuilt = run.recomputed_pnl - run.total_pnl
+        if abs(rebuilt) >= 0.01:
+            print(
+                f"  MODEL MISMATCH     layers rebuild {run.recomputed_pnl:>12.2f} "
+                f"({rebuilt:+.2f} vs snapshot); the audit used a different "
+                f"commission/margin model than the run"
+            )
 
 
 def _print_exit_breakdown(run: Run) -> None:
@@ -335,13 +404,34 @@ def bootstrap_expectancy(
     }
 
 
-def attribute(base: Run, net: Run) -> dict[str, float]:
+def _rates(row: TradeRow) -> tuple[float, float, float, float]:
+    """Per-ruble rates: price, market cost, commission+margin, net."""
+    if not row.quantity:
+        return 0.0, 0.0, 0.0, 0.0
+    q = row.quantity
+    return (
+        row.pnl_price / q,
+        row.market_cost / q,
+        (row.commission + row.margin) / q,
+        row.pnl_net / q,
+    )
+
+
+def attribute(
+    base: Run, net: Run, *, verbose: bool = True, reference: Run | None = None
+) -> dict[str, float]:
     """Split `net - base` PnL delta into price, size, market, commission, new/lost.
 
-    `price` is the pure price effect at the *base* position size, so a changed
-    trade set or a moved level shows up there. `size` is the compounding effect:
-    a smaller balance buys a smaller position, which scales every layer.
+    Price, market and commission buckets are *rate* differences applied to a
+    reference position size, so they do not depend on the order of snapshots in
+    a chain. `size` is whatever is left: the compounding effect of a smaller
+    balance buying a smaller position. With `reference` set to the first run of
+    a chain, every step is measured against the same notional and the buckets
+    add up exactly, step by step and first -> last.
     """
+    ref_by_time = {
+        t.entry_time: t for t in (reference.trades if reference is not None else base.trades)
+    }
     base_by_time = {t.entry_time: t for t in base.trades}
     net_by_time = {t.entry_time: t for t in net.trades}
 
@@ -360,14 +450,21 @@ def attribute(base: Run, net: Run) -> dict[str, float]:
             buckets["new_trades"] += net_row.pnl_net
             continue
         matched += 1
-        if base_row.quantity and net_row.quantity:
-            rate_base = base_row.pnl_price / base_row.quantity
-            rate_net = net_row.pnl_price / net_row.quantity
-            buckets["price"] += (rate_net - rate_base) * base_row.quantity
-            buckets["size"] += (net_row.quantity - base_row.quantity) * rate_net
-        buckets["market"] += net_row.market_cost - base_row.market_cost
-        buckets["commission"] += (base_row.commission + base_row.margin) - (
-            net_row.commission + net_row.margin
+        reference_row = ref_by_time.get(entry_time, base_row)
+        notional = reference_row.quantity
+        base_price, base_market, base_commission, _ = _rates(base_row)
+        net_price, net_market, net_commission, _ = _rates(net_row)
+
+        price = (net_price - base_price) * notional
+        market = (net_market - base_market) * notional
+        # Costs are negative in PnL terms: a positive bucket means cheaper.
+        commission = (base_commission - net_commission) * notional
+
+        buckets["price"] += price
+        buckets["market"] += market
+        buckets["commission"] += commission
+        buckets["size"] += (net_row.pnl_net - base_row.pnl_net) - (
+            price + market + commission
         )
     for entry_time, base_row in base_by_time.items():
         if entry_time not in net_by_time:
@@ -382,12 +479,18 @@ def attribute(base: Run, net: Run) -> dict[str, float]:
         + buckets["new_trades"]
         + buckets["lost_trades"]
     )
-    print(f"\nAttribution {base.label} -> {net.label} (matched {matched} trades)")
-    for name in ("price", "size", "market", "commission", "new_trades", "lost_trades"):
-        print(f"  {name:<12} {buckets[name]:>12.2f}")
-    print(f"  {'total':<12} {buckets['total']:>12.2f}")
-    print(f"  {'residual':<12} {buckets['residual']:>12.2f}")
+    if verbose:
+        print(f"\nAttribution {base.label} -> {net.label} (matched {matched} trades)")
+        for name in ("price", "size", "market", "commission", "new_trades", "lost_trades"):
+            print(f"  {name:<12} {buckets[name]:>12.2f}")
+        print(f"  {'total':<12} {buckets['total']:>12.2f}")
+        print(f"  {'residual':<12} {buckets['residual']:>12.2f}")
     return buckets
+
+
+def attribute_quiet(base: Run, net: Run, *, reference: Run | None = None) -> dict[str, float]:
+    """`attribute()` without the per-run printout, for chained reports."""
+    return attribute(base, net, verbose=False, reference=reference)
 
 
 def write_csv(path: Path, runs: list[Run]) -> None:
@@ -432,10 +535,65 @@ def write_csv(path: Path, runs: list[Run]) -> None:
     print(f"\nCSV: {path}")
 
 
+def _print_chain(runs: list[Run]) -> float:
+    """Reconciled table for a chain of snapshots; returns the worst residual.
+
+    Each step is attributed on its own, and the first -> last delta is checked
+    against the sum of the steps: a chained report cannot hide a bucket that
+    only appears in one of the intermediate runs.
+    """
+    header = f"{'step':<24}{'delta':>12}{'price':>10}{'size':>10}{'market':>10}"
+    header += f"{'commiss':>10}{'new':>9}{'lost':>9}{'resid':>8}"
+    print("\n" + header)
+    print("-" * len(header))
+    totals = dict.fromkeys(
+        ("price", "size", "market", "commission", "new_trades", "lost_trades"), 0.0
+    )
+    step_sum = 0.0
+    worst = 0.0
+    for previous, current in zip(runs, runs[1:], strict=False):
+        buckets = attribute_quiet(previous, current, reference=runs[0])
+        step_sum += buckets["total"]
+        for key in totals:
+            totals[key] += buckets[key]
+        worst = max(worst, abs(buckets["residual"]))
+        print(
+            f"{previous.label + ' -> ' + current.label:<24}"
+            f"{buckets['total']:>12.2f}{buckets['price']:>10.2f}"
+            f"{buckets['size']:>10.2f}{buckets['market']:>10.2f}"
+            f"{buckets['commission']:>10.2f}{buckets['new_trades']:>9.2f}"
+            f"{buckets['lost_trades']:>9.2f}{buckets['residual']:>8.2f}"
+        )
+    print("-" * len(header))
+    print(
+        f"{'sum of steps':<24}{step_sum:>12.2f}{totals['price']:>10.2f}"
+        f"{totals['size']:>10.2f}{totals['market']:>10.2f}"
+        f"{totals['commission']:>10.2f}{totals['new_trades']:>9.2f}"
+        f"{totals['lost_trades']:>9.2f}"
+    )
+    direct = attribute_quiet(runs[0], runs[-1], reference=runs[0])
+    print(
+        f"{'first -> last':<24}{direct['total']:>12.2f}{direct['price']:>10.2f}"
+        f"{direct['size']:>10.2f}{direct['market']:>10.2f}"
+        f"{direct['commission']:>10.2f}{direct['new_trades']:>9.2f}"
+        f"{direct['lost_trades']:>9.2f}{direct['residual']:>8.2f}"
+    )
+    drift = direct["total"] - step_sum
+    print(f"\nchain drift (first->last minus sum of steps): {drift:+.2f} RUB")
+    worst = max(worst, abs(direct["residual"]), abs(drift))
+    return worst
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Cost attribution between two PnL snapshots")
     parser.add_argument("base", nargs="?", help="baseline snapshot (zero market costs)")
     parser.add_argument("net", nargs="?", help="snapshot with the cost model switched on")
+    parser.add_argument(
+        "--chain",
+        nargs="+",
+        metavar="SNAPSHOT",
+        help="two or more snapshots: attribute every step and reconcile the total",
+    )
     parser.add_argument(
         "--oos",
         help="walk-forward snapshot: print a bootstrap CI for the OOS expectancy only",
@@ -480,8 +638,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.oos:
         report_oos(Path(args.oos), args.bootstrap)
         return 0
+    if args.chain:
+        if len(args.chain) < 2:
+            raise SystemExit("--chain needs at least two snapshots")
+        runs = [replay(Path(path), Path(path).stem) for path in args.chain]
+        for run in runs:
+            _print_totals(run)
+        worst = _print_chain(runs)
+        write_csv(Path(args.csv), runs)
+        return 0 if worst < 0.01 else 1
     if not args.base or not args.net:
-        raise SystemExit("base and net snapshots are required unless --oos is used")
+        raise SystemExit("base and net snapshots are required unless --oos/--chain is used")
     base = replay(Path(args.base), "base")
     net = replay(Path(args.net), "net")
     _print_totals(base)

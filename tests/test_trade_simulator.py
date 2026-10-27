@@ -409,6 +409,28 @@ def test_levels_from_fill_reproduces_the_live_convention():
     assert trades[0].sl_level == pytest.approx(95.038)
 
 
+def test_cost_model_does_not_change_gap_only_exits():
+    """Second exit path: only gaps close the trades, the set still matches."""
+    candles = make_candles([
+        (100.0, 100.0, 100.0, 100.0),
+        (100.0, 100.5, 99.5, 100.0),   # entry 1
+        (90.0, 91.0, 89.0, 90.0),      # gap below SL 95 -> GAP
+        (90.0, 90.5, 89.5, 90.0),      # signal 2
+        (90.0, 90.5, 89.5, 90.0),      # entry 2
+        (100.0, 100.5, 99.5, 100.0),   # gap above TP 99 -> GAP
+    ])
+    signals = [signal(0), signal(3)]
+
+    without = run(candles, signals, tp=10.0, sl=5.0)
+    with_costs = run(candles, signals, tp=10.0, sl=5.0, costs=BpsCosts(20.0, 30.0))
+
+    assert [t.exit_reason for t in without] == ["GAP", "GAP"]
+    assert [t.exit_reason for t in with_costs] == ["GAP", "GAP"]
+    assert [t.entry_index for t in without] == [t.entry_index for t in with_costs]
+    assert [t.exit_index for t in without] == [t.exit_index for t in with_costs]
+    assert without[0].pnl_abs != with_costs[0].pnl_abs
+
+
 def test_exit_reason_separates_gap_from_intrabar_exit():
     candles = make_candles([
         (100.0, 100.0, 100.0, 100.0),

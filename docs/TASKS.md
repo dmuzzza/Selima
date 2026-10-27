@@ -91,7 +91,7 @@ ImportError; в логах нет токенов и `account_id`.
 | T2-5 | **Идемпотентность live-торговли**: проверка «сигнал уже обработан» по `(figi, timeframe, candle_open_time, direction)`, а не только по открытой позиции | P0 | M | done |
 | T2-6 | **Защита от двойного открытия** при рестарте: блокировка/ключ в БД перед `post_market_order` | P0 | M | done (PENDING-запись с `signal_key` создаётся до отправки ордера; зависшие PENDING разбирает `PendingRecovery`, ADR-013) |
 | T2-7 | **Модель издержек**: проскальзывание, гэпы, спред, реальные тарифы брокера (сейчас только 0.05% + маржа) | P1 | M | done (спред ½ на сторону + проскальзывание, `TickCosts` для фьючерсов, метки GROSS/NET; ADR-016) |
-| T2-7a | **Аудит издержек и исправление уровней**: уровни TP/SL от сырого `open`, три слоя PnL, реальный gross (`COMMISSION_MODE` из env), `exit_reason`, `scripts/cost_audit.py`, `tp_penalty`, bootstrap-CI | P0 (доверие к цифрам) | M | done (ADR-017; SBER 4h: чистые издержки −8.8%, а не −39%; OOS-CI включает ноль) |
+| T2-7a | **Аудит издержек и исправление уровней**: уровни TP/SL от сырого `open`, три слоя PnL, реальный gross (`COMMISSION_MODE` из env), `exit_reason`, `scripts/cost_audit.py`, `tp_penalty`, bootstrap-CI | P0 (доверие к цифрам) | M | done (ADR-017, ADR-018; SBER 4h: издержки рынка −6.9% от gross, а не −39%; при консервативной марже OOS-CI включает ноль) |
 | T2-8 | **Walk-forward и out-of-sample** вместо подбора TP/SL на всей истории (сейчас `optimization/grid_tp_sl_dual_ma.py` подбирает на тех же данных) | P0 (риск переобучения) | L | done (`src/backtest/walk_forward.py` + `scripts/walk_forward.py`, ADR-015) |
 | T2-9 | **Метрики риска**: Sortino, Calmar, VaR, средняя просадка, распределение R-multiple | P2 | M | todo |
 | T2-10 | **Наблюдаемость**: структурные JSON-логи, метрики (открытые позиции, ошибки API, лаг данных), healthcheck-endpoint | P1 | M | todo |
@@ -101,6 +101,7 @@ ImportError; в логах нет токенов и `account_id`.
 | T2-14 | **CI**: GitHub Actions — ruff, mypy, pytest на PR в `dev` | P1 | S | done (`.github/workflows/ci.yml`; проверяется «чистый набор», список расширяется по мере T1-7) |
 | T2-15 | **Docker**: multi-stage, non-root, healthcheck, compose с PostgreSQL для локальной разработки | P1 | M | todo |
 | T2-16 | **Аудит зависимостей**: `pip-audit`, `bandit`, `trivy` в CI | P2 | S | todo |
+| T2-17 | **Сверка маржи с отчётом брокера**: `MARGIN_SHORT_UNCOVERED=True` — консервативное допущение, не подтверждённое выпиской. Взять реальный отчёт по счёту с шортовыми переносами, сверить фактическую плату с `calculate_margin_fee()`, зафиксировать результат в ADR-018 и снять допущение | P1 (доверие к издержкам) | S | todo |
 
 **Приёмка T2 (минимум перед реальной торговлей):** T2-1, T2-5, T2-6, T2-8.
 

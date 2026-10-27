@@ -32,6 +32,7 @@ if str(ROOT) not in sys.path:
 
 from dotenv import load_dotenv  # noqa: E402
 
+from config.commissions import describe_commissions  # noqa: E402
 from src.backtest.costs import (  # noqa: E402
     BpsCosts,
     CostConfig,
@@ -218,6 +219,7 @@ def collect(args: argparse.Namespace) -> dict:
                 ),
             }
         ),
+        "commissions": describe_commissions(),
         "runs": len(runs),
         "evaluated": len(evaluated),
         "gross_rejected": len(rejected),

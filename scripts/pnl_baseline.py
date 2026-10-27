@@ -34,6 +34,7 @@ if str(ROOT) not in sys.path:
 
 from dotenv import load_dotenv  # noqa: E402
 
+from config.commissions import describe_commissions  # noqa: E402
 from src.backtest.costs import (  # noqa: E402
     ZERO_COSTS,
     BpsCosts,
@@ -125,6 +126,10 @@ def run_single(
             "status": "ok",
             "costs": costs.describe(),
             "levels_from_fill": levels_from_fill,
+            # Replay inputs for cost_audit: position size is not in a fingerprint,
+            # so the audit must know the sizing rules of this exact run.
+            "initial_balance": strategy.initial_balance,
+            "position_size_percent": strategy.position_size_percent,
             "signals": len(result["signals"]),
             "trades": len(trades),
             "closed": len(closed),
@@ -243,6 +248,7 @@ def collect(args: argparse.Namespace) -> dict:
         "tag": args.tag,
         "timeframes": timeframes,
         "costs": costs_description,
+        "commissions": describe_commissions(),
         "runs": len(runs),
         "total_trades": total_trades,
         "total_pnl": total_pnl,
