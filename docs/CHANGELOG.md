@@ -7,10 +7,21 @@
 
 ### Added
 
+- **Null-тест (T2-18, ADR-020):** `src/backtest/null_test.py` (дрейфless-блуждание,
+  прогон по сидам, bootstrap-CI), `src/strategies/_null_entry/` (случайные
+  детерминированные входы, в реестр не попадает), `scripts/null_test.py` (CLI, код
+  возврата 1 при вердикте `optimism`). Синтетика: `expectancy_net` −166.15 ₽/сделку
+  (−17.06 bps) CI [−219.97; −110.74] при издержках −158.69 ₽, вердикт `ok`; контроль
+  без издержек и комиссии: CI [−65.10; +50.08], ноль внутри. SBER 4h: net −256.79 ₽
+  (−37.93 bps) CI [−309.08; −207.99], `expectancy_price` CI содержит ноль.
+  `--gross` требует `COMMISSION_MODE=NONE`. Издержки печатаются в ₽ и bps позиции.
+- `tests/test_null_test.py`: 14 тестов — детерминизм, отсутствие дрейфа,
+  `high`/`low` вокруг `open`/`close`, изоляция от реестра, bootstrap, три ветки
+  вердикта, сходимость слоёв PnL, bps по типам выхода (TP −7 bps, SL −14 bps),
+  контроль без издержек, отрицательный интервал.
 - `src/backtest/exit_policy.py`: `ExitPolicy` (протокол) + `PercentExitPolicy`;
   `ExitPolicyConfig` с версией и `sha256` (формат `version+sha12`),
-  `MissingExitPolicyError`, `resolve_exit_policy()` (T3-4, ADR-019).
-- `config/tp_sl.json` версии 1: TP/SL по стратегиям — `by_ticker` (dual_ma,
+  `MissingExitPolicyError`, `resolve_exit_policy()` (T3-4, ADR-019).- `config/tp_sl.json` версии 1: TP/SL по стратегиям — `by_ticker` (dual_ma,
   timeframe → ticker) и `by_timeframe` (sma_crossover, template). Значения
   перенесены из `DEFAULT_CONFIG` 1:1.
 - `scripts/trade_set_snapshot.py`: снапшот набора сделок (индексы входа/выхода,
@@ -49,7 +60,8 @@
 - `dual_ma_crossover_after_testing` и `sma_crossover`: таблицы TP/SL удалены из
   `DEFAULT_CONFIG`; `get_config()` больше не подставляет `1.5 / 1.0`.
 - `_template`: TP/SL убраны из конфига, шаблон ссылается на `config/tp_sl.json`.
-- `CLEAN_SET` расширен: `src/backtest/exit_policy.py`.
+- `CLEAN_SET` расширен: `src/backtest/exit_policy.py`, `src/backtest/null_test.py`,
+  `src/strategies/_null_entry`.
 - `config/costs.json` версия 1 → 2: `tick_size` CRU6 0.01 → 0.001 (шаг цены MOEX CNY,
   стоимость шага 1 ₽, лот 1000 CNY). Тиковые издержки CRU6 были завышены в 10 раз:
   слой издержек рынка −1 977.56 → −200.58 ₽, net при `MARGIN_SHORT_UNCOVERED=0`

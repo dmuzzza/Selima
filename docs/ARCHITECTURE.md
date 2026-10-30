@@ -109,6 +109,7 @@ p_selima_v8.1/
 │   │   ├── mfi_bb_strategy.txt        [L] стратегия в виде текста, не кода
 │   │   ├── sma_crossover/             [C] пакет: config.py, strategy.py, signal_validator.py
 │   │   ├── _template/                 [C] шаблон новой стратегии: config.py, strategy.py (в реестр не попадает)
+│   │   ├── _null_entry/               [C] случайные детерминированные входы — контроль движка, не торгуется (ADR-020)
 │   │   └── dual_ma_crossover_after_testing/  [C] пакет: config.py (TP/SL по тикерам), strategy.py
 │   │
 │   ├── sma_crossover/                 [L] КОПИЯ src/strategies/sma_crossover/ (идентична)
@@ -147,6 +148,7 @@ p_selima_v8.1/
 │   │   ├── costs.py                   [C] CostModel: спред (½ на сторону), проскальзывание,
 │   │   │                                  tp_penalty (чувствительность), метки GROSS/NET (ADR-016)
 │   │   ├── walk_forward.py            [C] окна train/test, отбор параметров на train, OOS-прогон (ADR-015)
+│   │   ├── null_test.py               [C] контроль движка: случайные входы должны терять издержки (ADR-020)
 │   │   └── backtester.py              [L] отдельный движок бэктеста (не используется стратегиями)
 │   ├── storage/models.py              [L] устаревшая ORM-модель "marketdata"
 │   └── utils/
@@ -162,6 +164,7 @@ p_selima_v8.1/
 │   ├── test_walk_forward.py           walk-forward: окна, изоляция параметров, warmup, пропуск окон
 │   ├── test_costs.py                  издержки: спред/проскальзывание, TP-лимитка, конфиг, GROSS/NET
 │   ├── test_exit_policy.py            TP/SL: резолв из tp_sl.json, ошибки без дефолтов, хеш конфига
+│   ├── test_null_test.py              null-тест: случайные входы, контроль без издержек, вердикты
 │   └── test_allow_short_parity.py     backtest и live одинаково соблюдают allow_short
 │
 ├── dashboard/                         [C] актуальный дашборд
@@ -179,7 +182,8 @@ p_selima_v8.1/
 │                                          pnl_baseline.py (baseline PnL до/после правок движка),
 │                                          walk_forward.py (OOS-оценка TP/SL),
 │                                          cost_audit.py (разложение Δ PnL по слоям, bootstrap-CI),
-│                                          trade_set_snapshot.py (набор сделок: индексы входа/выхода, PnL)
+│                                          trade_set_snapshot.py (набор сделок: индексы входа/выхода, PnL),
+│                                          null_test.py (случайные входы против издержек, ADR-020)
 ├── optimization/                      [T] grid_tp_sl_dual_ma.py, optimize_macd_plus.py,
 │                                          _check_db.py, tz_ml_optimization.md (ТЗ на ML)
 ├── debug/                             [T] debug_margin.py, debug_instrument.py

@@ -16,8 +16,10 @@ env:
     config/commissions.py
     src/backtest/costs.py
     src/backtest/exit_policy.py
+    src/backtest/null_test.py
     src/backtest/simulator.py
     src/backtest/walk_forward.py
+    src/strategies/_null_entry
     src/strategies/_template
     src/strategies/strategy_registry.py
     src/trading/pending_recovery.py

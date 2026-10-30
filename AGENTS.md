@@ -63,7 +63,7 @@ mypy --follow-imports=silent $CLEAN_SET
 pytest -q                    # все тесты, не только CLEAN_SET
 ```
 
-Текущее состояние: **158 тестов зелёные** (на момент написания файла). Не коммитить
+Текущее состояние: **171 тест зелёный** (на момент написания файла). Не коммитить
 с падающими тестами.
 
 `mypy` в `pyproject.toml` исключает `scripts/` — скрипты не типизируются, но обязаны
@@ -136,7 +136,7 @@ pytest -q                    # все тесты, не только CLEAN_SET
 | `src/backtest/exit_policy.py` | откуда берутся TP/SL | `ExitPolicy`, `PercentExitPolicy`, `resolve_exit_policy`, `MissingExitPolicyError` |
 | `src/backtest/costs.py` | спред/проскальзывание/комиссия | `BpsCosts`, `TickCosts`, `load_costs`, `CostModel` |
 | `src/backtest/walk_forward.py` | train/test окна, OOS-оценка | `generate_windows`, `run_walk_forward` |
-| `src/market_data/` | свечи: модели, таймфреймы, PostgreSQL | `Candle`, `Timeframe`, `HistoryManager` |
+| `src/backtest/null_test.py` | контроль движка: случайные входы | `null_test`, `synthetic_candles`, `classify` || `src/market_data/` | свечи: модели, таймфреймы, PostgreSQL | `Candle`, `Timeframe`, `HistoryManager` |
 | `src/brokers/` | брокер и счета | `AbstractBroker`, `TinkoffSDKBroker`, `BrokerFactory` |
 | `src/trading/orchestrator.py` | путь реального ордера | `TradingOrchestrator.process_signals` |
 | `src/trading/pending_recovery.py` | разбор зависших PENDING | `PendingRecovery` |
@@ -256,7 +256,7 @@ in-sample положительный, OOS отрицательный: **в live 
 
 ## 9. Состояние проекта
 
-Закрыто: T0 (блокеры запуска), T2-5/T2-6/T2-7/T2-7a/T2-8, T3-3/T3-4/T3-5/T3-6/T3-9/T3-10,
+Закрыто: T0 (блокеры запуска), T2-5/T2-6/T2-7/T2-7a/T2-8/T2-18, T3-3/T3-4/T3-5/T3-6/T3-9/T3-10,
 T4-1/T4-2/T4-5, T5-2/T5-6, T6-1…T6-6. Подробности и цифры — `docs/TASKS.md`,
 `docs/CHANGELOG.md`.
 
@@ -264,15 +264,21 @@ T4-1/T4-2/T4-5, T5-2/T5-6, T6-1…T6-6. Подробности и цифры —
 
 | ID | Задача | Зачем |
 |---|---|---|
-| T3-4a | Заполнить `config/tp_sl.json` для остальных тикеров/ТФ | сейчас `dual_ma` 21/44 на 4h, 0 на 1h/1d |
+| T2-17 | сверка маржи с отчётом брокера | `MARGIN_SHORT_UNCOVERED=True` — допущение; ждёт выписку |
+| T2-19 | heatmap TP/SL | плато или одинокая точка (переобучение) |
+| T2-20 | мультиинструментальный прогон | 200+ сделок для статистики |
+| T2-21 | отчёт-вердикт | допущена / на доработку / отбракована |
 | T3-7 | `Trade` / `LiveTrade` → общий `TradeRecord` | две модели сделки расходятся |
 | T2-4 | Alembic + перенос старых данных | ручные миграции |
 | T2-9 | Sortino/Calmar/VaR/R-multiple | метрики риска |
 | T2-10 | JSON-логи, метрики, healthcheck | наблюдаемость |
-| T2-17 | сверка маржи с отчётом брокера | `MARGIN_SHORT_UNCOVERED=True` — допущение |
 | T5-3/T5-4 | Dockerfile + compose | воспроизводимый запуск |
 | T1-2/T1-3 | удалить дубликаты, разнести корень | структура |
 | T1-7 | добить ruff/mypy в legacy | расширить `CLEAN_SET` |
+
+Отложено: T3-4a (заполнение `config/tp_sl.json` для остальных тикеров) — подбор
+уровней по 23 инструментам даёт риск переобучения и не отвечает на вопрос «работает
+или нет».
 
 ---
 
