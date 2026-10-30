@@ -16,6 +16,7 @@ env:
     config/commissions.py
     src/backtest/costs.py
     src/backtest/exit_policy.py
+    src/backtest/heatmap.py
     src/backtest/null_test.py
     src/backtest/simulator.py
     src/backtest/walk_forward.py

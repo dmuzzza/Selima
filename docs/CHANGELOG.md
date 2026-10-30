@@ -7,6 +7,19 @@
 
 ### Added
 
+- **Heatmap TP/SL (T2-19, ADR-021):** `src/backtest/heatmap.py` (скоринг ячеек в net
+  bps, правило плато с условием `best > 0`, исключение тонких ячеек, edge-флаг),
+  `scripts/heatmap.py` (Markdown + CSV, два блока: train-окна walk-forward — решение,
+  вся история — диагностика), `config/validation.json` версии 1 (пороги: 30 сделок,
+  маржа 20%, доля соседей 65%, минимум 3 evaluated-соседа). SBER 4h, сетка
+  TP 1…4 × SL 0.5…4, 20 train-окон: лучшая ячейка TP 3 / SL 2.5 — +69.82 bps,
+  157 сделок, 3/8 соседей проходят, вердикт `no_plateau` (TP 4% обрывает результат).
+  SBER 1d — `no_eligible_cells` (ни одна ячейка не набрала 30 сделок).
+- `tests/test_heatmap.py`: 27 тестов — пороги и фингерпринт, скоринг в bps,
+  открытые сделки и нулевой размер, все ветки вердикта, исключение тонких соседей
+  из знаменателя, `insufficient_neighbours`, edge-флаг, изоляция train-периода,
+  дедупликация перекрывающихся окон, отбрасывание warmup-сделок, Markdown и CSV.
+- `CLEAN_SET` расширен: `src/backtest/heatmap.py`.
 - **Null-тест (T2-18, ADR-020):** `src/backtest/null_test.py` (дрейфless-блуждание,
   прогон по сидам, bootstrap-CI), `src/strategies/_null_entry/` (случайные
   детерминированные входы, в реестр не попадает), `scripts/null_test.py` (CLI, код

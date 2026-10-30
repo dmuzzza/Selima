@@ -149,6 +149,7 @@ p_selima_v8.1/
 │   │   │                                  tp_penalty (чувствительность), метки GROSS/NET (ADR-016)
 │   │   ├── walk_forward.py            [C] окна train/test, отбор параметров на train, OOS-прогон (ADR-015)
 │   │   ├── null_test.py               [C] контроль движка: случайные входы должны терять издержки (ADR-020)
+│   │   ├── heatmap.py                 [C] сетка TP/SL: плато или одна точка, пороги из validation.json (ADR-021)
 │   │   └── backtester.py              [L] отдельный движок бэктеста (не используется стратегиями)
 │   ├── storage/models.py              [L] устаревшая ORM-модель "marketdata"
 │   └── utils/
@@ -165,6 +166,7 @@ p_selima_v8.1/
 │   ├── test_costs.py                  издержки: спред/проскальзывание, TP-лимитка, конфиг, GROSS/NET
 │   ├── test_exit_policy.py            TP/SL: резолв из tp_sl.json, ошибки без дефолтов, хеш конфига
 │   ├── test_null_test.py              null-тест: случайные входы, контроль без издержек, вердикты
+│   ├── test_heatmap.py                heatmap: скоринг в bps, все ветки плато, train-изоляция, отчёты
 │   └── test_allow_short_parity.py     backtest и live одинаково соблюдают allow_short
 │
 ├── dashboard/                         [C] актуальный дашборд
@@ -183,7 +185,8 @@ p_selima_v8.1/
 │                                          walk_forward.py (OOS-оценка TP/SL),
 │                                          cost_audit.py (разложение Δ PnL по слоям, bootstrap-CI),
 │                                          trade_set_snapshot.py (набор сделок: индексы входа/выхода, PnL),
-│                                          null_test.py (случайные входы против издержек, ADR-020)
+│                                          null_test.py (случайные входы против издержек, ADR-020),
+│                                          heatmap.py (сетка TP/SL: плато, Markdown + CSV, ADR-021)
 ├── optimization/                      [T] grid_tp_sl_dual_ma.py, optimize_macd_plus.py,
 │                                          _check_db.py, tz_ml_optimization.md (ТЗ на ML)
 ├── debug/                             [T] debug_margin.py, debug_instrument.py
@@ -260,6 +263,7 @@ PostgreSQL (`PgLiveTradeRepository` / `PgStopOrderRepository`). SQLite-репо�
 | `BaseStrategy` | `Candle`, `config.commissions`, `exit_policy` | все стратегии, `StrategyFactory` |
 | `TradeSimulator` | `Candle`, `Signal`, `Trade`, `CostModel`, `ExitPolicy` | `BaseStrategy.execute_trades()` |
 | `ExitPolicy` (`exit_policy.py`) | `config/tp_sl.json` | `TradeSimulator`, `BaseStrategy` |
+| `WalkForward` / `Heatmap` (`walk_forward.py`, `heatmap.py`) | runner стратегии, `config/validation.json` | `scripts/walk_forward.py`, `scripts/heatmap.py` |
 | `CostModel` (`costs.py`) | `config/commissions.py`, `config/costs.json` | `TradeSimulator`, `scripts/*` |
 | `StrategyFactory` | `strategy_registry` | scheduler, dashboard |
 | `HistoryManager` | `AbstractBroker`, SQLAlchemy | `DataUpdater`, dashboard, скрипты |

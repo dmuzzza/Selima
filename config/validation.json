@@ -1,0 +1,17 @@
+{
+  "version": "1",
+  "notes": [
+    "Thresholds for validation reports (heatmap, verdict). Every report prints them together with the fingerprint, so a decision can be reproduced.",
+    "min_trades_per_cell: cells with fewer closed trades do not take part in the plateau decision and are marked in the table.",
+    "plateau_margin_percent: a neighbour passes when its net expectancy is within this share of the best cell.",
+    "plateau_share: share of the 8 neighbours (±1 step on each axis) that must pass for the best cell to be called a plateau.",
+    "min_neighbours_evaluated: a corner cell has only 3 neighbours, so 3 is the floor that keeps every grid shape decidable; raise it for wider grids.",
+    "A plateau is reported only when the best cell and the passing neighbours are positive: a margin around a negative best cell means nothing."
+  ],
+  "heatmap": {
+    "min_trades_per_cell": 30,
+    "plateau_margin_percent": 20.0,
+    "plateau_share": 0.65,
+    "min_neighbours_evaluated": 3
+  }
+}

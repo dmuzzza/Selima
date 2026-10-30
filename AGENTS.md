@@ -50,6 +50,7 @@ Python 3.12, `uv`, PostgreSQL, Dash/Plotly, APScheduler.
 | Автоторговля | `uv run python scheduler.py` |
 | Baseline PnL | `uv run python scripts/pnl_baseline.py --tag before` |
 | Walk-forward | `uv run python scripts/walk_forward.py --tag before` |
+| Heatmap TP/SL (плато или точка) | `uv run python scripts/heatmap.py --ticker SBER --timeframe 4h --tag t2-19` |
 | Загрузка истории | `uv run python reload_data_v2.py` |
 
 Fallback без `uv`: `.venv\Scripts\python.exe -m pytest -q` (Windows),
@@ -63,7 +64,7 @@ mypy --follow-imports=silent $CLEAN_SET
 pytest -q                    # все тесты, не только CLEAN_SET
 ```
 
-Текущее состояние: **171 тест зелёный** (на момент написания файла). Не коммитить
+Текущее состояние: **197 тестов зелёный** (на момент написания файла). Не коммитить
 с падающими тестами.
 
 `mypy` в `pyproject.toml` исключает `scripts/` — скрипты не типизируются, но обязаны
@@ -136,7 +137,8 @@ pytest -q                    # все тесты, не только CLEAN_SET
 | `src/backtest/exit_policy.py` | откуда берутся TP/SL | `ExitPolicy`, `PercentExitPolicy`, `resolve_exit_policy`, `MissingExitPolicyError` |
 | `src/backtest/costs.py` | спред/проскальзывание/комиссия | `BpsCosts`, `TickCosts`, `load_costs`, `CostModel` |
 | `src/backtest/walk_forward.py` | train/test окна, OOS-оценка | `generate_windows`, `run_walk_forward` |
-| `src/backtest/null_test.py` | контроль движка: случайные входы | `null_test`, `synthetic_candles`, `classify` || `src/market_data/` | свечи: модели, таймфреймы, PostgreSQL | `Candle`, `Timeframe`, `HistoryManager` |
+| `src/backtest/null_test.py` | контроль движка: случайные входы | `null_test`, `synthetic_candles`, `classify` |
+| `src/backtest/heatmap.py` | сетка TP/SL: плато или одна точка | `score_cells`, `analyze_plateau`, `collect_train_trades` || `src/market_data/` | свечи: модели, таймфреймы, PostgreSQL | `Candle`, `Timeframe`, `HistoryManager` |
 | `src/brokers/` | брокер и счета | `AbstractBroker`, `TinkoffSDKBroker`, `BrokerFactory` |
 | `src/trading/orchestrator.py` | путь реального ордера | `TradingOrchestrator.process_signals` |
 | `src/trading/pending_recovery.py` | разбор зависших PENDING | `PendingRecovery` |
@@ -192,6 +194,11 @@ pytest -q                    # все тесты, не только CLEAN_SET
 Любая оценка стратегии — walk-forward с OOS-периодами. `oos_pnl` против `in_sample_pnl`
 и `degradation` (oos/is) — обязательные цифры в отчёте. Сейчас у стратегий-образцов
 in-sample положительный, OOS отрицательный: **в live они не включаются**.
+
+**Heatmap TP/SL** (ADR-021): решение о плато — только по train-окнам walk-forward;
+сетка на всей истории в отчёте помечена «диагностика, не для выбора». Ячейки ниже
+`min_trades_per_cell` (30) не участвуют в решении и помечаются `*`. Плато — не
+доказательство edge, только устойчивость к сдвигу параметров; вердикт даёт T2-21.
 
 **Live-торговля**:
 
@@ -256,16 +263,15 @@ in-sample положительный, OOS отрицательный: **в live 
 
 ## 9. Состояние проекта
 
-Закрыто: T0 (блокеры запуска), T2-5/T2-6/T2-7/T2-7a/T2-8/T2-18, T3-3/T3-4/T3-5/T3-6/T3-9/T3-10,
-T4-1/T4-2/T4-5, T5-2/T5-6, T6-1…T6-6. Подробности и цифры — `docs/TASKS.md`,
-`docs/CHANGELOG.md`.
+Закрыто: T0 (блокеры запуска), T2-5/T2-6/T2-7/T2-7a/T2-8/T2-18/T2-19,
+T3-3/T3-4/T3-5/T3-6/T3-9/T3-10, T4-1/T4-2/T4-5, T5-2/T5-6, T6-1…T6-6.
+Подробности и цифры — `docs/TASKS.md`, `docs/CHANGELOG.md`.
 
 Следующие по приоритету:
 
 | ID | Задача | Зачем |
 |---|---|---|
 | T2-17 | сверка маржи с отчётом брокера | `MARGIN_SHORT_UNCOVERED=True` — допущение; ждёт выписку |
-| T2-19 | heatmap TP/SL | плато или одинокая точка (переобучение) |
 | T2-20 | мультиинструментальный прогон | 200+ сделок для статистики |
 | T2-21 | отчёт-вердикт | допущена / на доработку / отбракована |
 | T3-7 | `Trade` / `LiveTrade` → общий `TradeRecord` | две модели сделки расходятся |
