@@ -33,6 +33,8 @@ debug/walk_forward*.json
 debug/trade_set_*.json
 debug/null_test_*.json
 debug/heatmap_*.md
+debug/portfolio_*.json
+debug/portfolio_*.md
 *.db
 *.db-journal
 *.sqlite3

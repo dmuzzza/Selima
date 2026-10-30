@@ -7,6 +7,24 @@
 
 ### Added
 
+- **Мультиинструментальный прогон (T2-20, ADR-022):** `src/backtest/portfolio.py`
+  (фингерпринты набора и параметров, пул сделок с полем `ticker`, пометка
+  `gap_affected`, блочный bootstrap по календарным блокам с пустыми блоками,
+  разбивка по тикерам, вклады, пороги), `scripts/portfolio_run.py` (Markdown + CSV +
+  JSON-снапшот в `debug/`), `config/portfolio.json` версии 1 (20 ликвидных акций,
+  TP 2.5 / SL 2.0, 4h, 100 000 ₽ на тикер — параметры зафиксированы до прогона),
+  секция `multi_instrument` в `config/validation.json`. Результат: 929 сделок,
+  net +34 864.50 ₽ (+2.71 bps), CI95 [−15.53; +22.42], 15/20 прибыльных тикеров,
+  вклад лучшего (ALRS) +83.9% → вердикт `inconclusive`: **edge не доказан**.
+  Отчёт печатает `portfolio_version`, `tickers_sha256`, `params_sha256`,
+  `costs_version`, `tp_sl_version`, `validation_version`; сырые карты издержек и
+  число свечей — только в JSON-снапшоте.
+- `tests/test_portfolio.py`: 39 тестов — фингерпринты набора и параметров, хеш
+  списка не зависит от порядка, независимость прогонов, пул = сумма прогонов,
+  блоки содержат все тикеры периода, пустые блоки сохраняются, детерминизм
+  bootstrap, ratio-статистика, тонкие тикеры, вклады при нулевом итоге, гэпы,
+  порог 200, три варианта отчёта, CSV.
+- `CLEAN_SET` расширен: `src/backtest/portfolio.py`.
 - **Heatmap TP/SL (T2-19, ADR-021):** `src/backtest/heatmap.py` (скоринг ячеек в net
   bps, правило плато с условием `best > 0`, исключение тонких ячеек, edge-флаг),
   `scripts/heatmap.py` (Markdown + CSV, два блока: train-окна walk-forward — решение,
@@ -75,6 +93,13 @@
 - `_template`: TP/SL убраны из конфига, шаблон ссылается на `config/tp_sl.json`.
 - `CLEAN_SET` расширен: `src/backtest/exit_policy.py`, `src/backtest/null_test.py`,
   `src/strategies/_null_entry`.
+- `config/costs.json` версия 2 → 3: 11 явных записей для тикеров набора T2-20  (SNGSP, MTSS, MGNT, CHMF, NLMK, MAGN, RTKM, AFLT, PIKK, TRNFP, IRAO) вместо
+  наследования default 4/5 bps. Значения оценочные (шаг цены + премия за
+  ликвидность), не из стакана. **Отчёты с `costs_version` v2 несопоставимы с v3:**
+  издержки тех же тикеров изменились (ADR-022).
+- `config/validation.json` версия 1 → 2: добавлены секция `multi_instrument` и
+  `gap_threshold_percent`. Пороги heatmap не менялись; фингерпринт изменился,
+  поэтому `validation_version` в отчётах теперь `2+…`.
 - `config/costs.json` версия 1 → 2: `tick_size` CRU6 0.01 → 0.001 (шаг цены MOEX CNY,
   стоимость шага 1 ₽, лот 1000 CNY). Тиковые издержки CRU6 были завышены в 10 раз:
   слой издержек рынка −1 977.56 → −200.58 ₽, net при `MARGIN_SHORT_UNCOVERED=0`

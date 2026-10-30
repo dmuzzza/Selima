@@ -1,17 +1,31 @@
 {
-  "version": "1",
+  "version": "2",
   "notes": [
     "Thresholds for validation reports (heatmap, verdict). Every report prints them together with the fingerprint, so a decision can be reproduced.",
     "min_trades_per_cell: cells with fewer closed trades do not take part in the plateau decision and are marked in the table.",
     "plateau_margin_percent: a neighbour passes when its net expectancy is within this share of the best cell.",
     "plateau_share: share of the 8 neighbours (±1 step on each axis) that must pass for the best cell to be called a plateau.",
     "min_neighbours_evaluated: a corner cell has only 3 neighbours, so 3 is the floor that keeps every grid shape decidable; raise it for wider grids.",
-    "A plateau is reported only when the best cell and the passing neighbours are positive: a margin around a negative best cell means nothing."
+    "A plateau is reported only when the best cell and the passing neighbours are positive: a margin around a negative best cell means nothing.",
+    "min_total_trades: below this the multi-instrument run reports insufficient_trades instead of a verdict; 200 is the level where a per-trade confidence interval stops being anecdotal.",
+    "min_ticker_trades: a ticker below this is marked thin, stays in the totals and is excluded from the share of profitable tickers; 30 matches the heatmap cell floor.",
+    "block_days: calendar length of one bootstrap block; a block holds the trades of every ticker, so the common market factor is resampled together.",
+    "Empty blocks are part of the population: dropping them would bias the sample towards active periods.",
+    "gap_threshold_percent: a trade is marked gap_affected when an overnight gap inside its holding period exceeds this size. Candles are not dividend-adjusted, so an ex-dividend gap looks like a market move; the report prints totals with and without such trades instead of guessing ex-dividend dates."
   ],
   "heatmap": {
     "min_trades_per_cell": 30,
     "plateau_margin_percent": 20.0,
     "plateau_share": 0.65,
     "min_neighbours_evaluated": 3
+  },
+  "multi_instrument": {
+    "min_total_trades": 200,
+    "min_ticker_trades": 30,
+    "block_days": 30,
+    "bootstrap_iterations": 10000,
+    "alpha": 0.05,
+    "seed": 42,
+    "gap_threshold_percent": 5.0
   }
 }

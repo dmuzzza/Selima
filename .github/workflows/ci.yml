@@ -18,6 +18,7 @@ env:
     src/backtest/exit_policy.py
     src/backtest/heatmap.py
     src/backtest/null_test.py
+    src/backtest/portfolio.py
     src/backtest/simulator.py
     src/backtest/walk_forward.py
     src/strategies/_null_entry

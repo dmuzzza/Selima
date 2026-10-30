@@ -1,11 +1,13 @@
 {
-  "version": "2",
+  "version": "3",
   "notes": [
     "Costs are estimates for backtesting, not broker quotes. Calibrate them from the order book before trusting a live candidate.",
     "spread_bps is the FULL spread: each side pays half of it. slippage_bps is a separate per-side value.",
     "A zero-cost model is reported as GROSS and is not tradable (ADR-016).",
     "Only instruments that differ from the default are listed; everything else inherits `default`.",
-    "tick_size for CRU6 is the MOEX price step 0.001 RUB (step value 1 RUB, lot 1000 CNY); 0.01 was a 10x error fixed in ADR-018."
+    "tick_size for CRU6 is the MOEX price step 0.001 RUB (step value 1 RUB, lot 1000 CNY); 0.01 was a 10x error fixed in ADR-018.",
+    "Version 3 adds explicit entries for the T2-20 portfolio set (SNGSP, MTSS, MGNT, CHMF, NLMK, MAGN, RTKM, AFLT, PIKK, TRNFP, IRAO) so they no longer silently inherit the 4/5 bps default. Values are estimates from the tick size relative to the last close plus a liquidity premium, not measured from the order book; calibrate them against real quotes or trades later (ADR-022).",
+    "Reports produced with version 2 are not comparable with version 3: the same ticker may now carry different costs."
   ],
   "default": {
     "mode": "bps",
@@ -23,6 +25,17 @@
     "GMKN": { "spread_bps": 3.0, "slippage_bps": 4.0 },
     "NVTK": { "spread_bps": 3.0, "slippage_bps": 4.0 },
     "TATN": { "spread_bps": 3.0, "slippage_bps": 3.0 },
+    "MTSS": { "spread_bps": 3.0, "slippage_bps": 4.0 },
+    "MGNT": { "spread_bps": 3.0, "slippage_bps": 4.0 },
+    "CHMF": { "spread_bps": 3.0, "slippage_bps": 4.0 },
+    "NLMK": { "spread_bps": 3.0, "slippage_bps": 4.0 },
+    "SNGSP": { "spread_bps": 4.0, "slippage_bps": 5.0 },
+    "RTKM": { "spread_bps": 4.0, "slippage_bps": 5.0 },
+    "TRNFP": { "spread_bps": 6.0, "slippage_bps": 8.0 },
+    "AFLT": { "spread_bps": 6.0, "slippage_bps": 8.0 },
+    "PIKK": { "spread_bps": 6.0, "slippage_bps": 8.0 },
+    "MAGN": { "spread_bps": 6.0, "slippage_bps": 8.0 },
+    "IRAO": { "spread_bps": 6.0, "slippage_bps": 8.0 },
     "SMLT": { "spread_bps": 10.0, "slippage_bps": 15.0 },
     "SPBE": { "spread_bps": 10.0, "slippage_bps": 15.0 },
     "SGZH": { "spread_bps": 10.0, "slippage_bps": 15.0 },

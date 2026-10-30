@@ -51,6 +51,7 @@ Python 3.12, `uv`, PostgreSQL, Dash/Plotly, APScheduler.
 | Baseline PnL | `uv run python scripts/pnl_baseline.py --tag before` |
 | Walk-forward | `uv run python scripts/walk_forward.py --tag before` |
 | Heatmap TP/SL (плато или точка) | `uv run python scripts/heatmap.py --ticker SBER --timeframe 4h --tag t2-19` |
+| Мультиинструмент (одно правило, пул сделок) | `uv run python scripts/portfolio_run.py --tag t2-20` |
 | Загрузка истории | `uv run python reload_data_v2.py` |
 
 Fallback без `uv`: `.venv\Scripts\python.exe -m pytest -q` (Windows),
@@ -64,7 +65,7 @@ mypy --follow-imports=silent $CLEAN_SET
 pytest -q                    # все тесты, не только CLEAN_SET
 ```
 
-Текущее состояние: **197 тестов зелёный** (на момент написания файла). Не коммитить
+Текущее состояние: **237 тестов зелёный** (на момент написания файла). Не коммитить
 с падающими тестами.
 
 `mypy` в `pyproject.toml` исключает `scripts/` — скрипты не типизируются, но обязаны
@@ -138,7 +139,8 @@ pytest -q                    # все тесты, не только CLEAN_SET
 | `src/backtest/costs.py` | спред/проскальзывание/комиссия | `BpsCosts`, `TickCosts`, `load_costs`, `CostModel` |
 | `src/backtest/walk_forward.py` | train/test окна, OOS-оценка | `generate_windows`, `run_walk_forward` |
 | `src/backtest/null_test.py` | контроль движка: случайные входы | `null_test`, `synthetic_candles`, `classify` |
-| `src/backtest/heatmap.py` | сетка TP/SL: плато или одна точка | `score_cells`, `analyze_plateau`, `collect_train_trades` || `src/market_data/` | свечи: модели, таймфреймы, PostgreSQL | `Candle`, `Timeframe`, `HistoryManager` |
+| `src/backtest/heatmap.py` | сетка TP/SL: плато или одна точка | `score_cells`, `analyze_plateau`, `collect_train_trades` |
+| `src/backtest/portfolio.py` | мультиинструмент: пул, блочный bootstrap | `pool_trades`, `block_bootstrap`, `summarize`, `build_report` || `src/market_data/` | свечи: модели, таймфреймы, PostgreSQL | `Candle`, `Timeframe`, `HistoryManager` |
 | `src/brokers/` | брокер и счета | `AbstractBroker`, `TinkoffSDKBroker`, `BrokerFactory` |
 | `src/trading/orchestrator.py` | путь реального ордера | `TradingOrchestrator.process_signals` |
 | `src/trading/pending_recovery.py` | разбор зависших PENDING | `PendingRecovery` |
@@ -199,6 +201,14 @@ in-sample положительный, OOS отрицательный: **в live 
 сетка на всей истории в отчёте помечена «диагностика, не для выбора». Ячейки ниже
 `min_trades_per_cell` (30) не участвуют в решении и помечаются `*`. Плато — не
 доказательство edge, только устойчивость к сдвигу параметров; вердикт даёт T2-21.
+
+**Мультиинструмент** (ADR-022): набор и параметры фиксируются в `config/portfolio.json`
+**до** прогона, подбор под тикер запрещён. Каждый тикер — свой счёт (лимит позиций и
+общий капитал не моделируются). Пул сделок ресемплируется **блоками по времени**
+(30 дней, блок содержит все тикеры, пустые блоки сохраняются), статистика — `sum(bps)/
+trades`. Свечи не скорректированы на дивиденды: сделки с гэпом > 5% помечаются
+`gap_affected`, отчёт печатает итоги с ними и без них (календарь — T2-22). Набор выбран
+по сегодняшней ликвидности → смещение выжившего.
 
 **Live-торговля**:
 
@@ -263,7 +273,7 @@ in-sample положительный, OOS отрицательный: **в live 
 
 ## 9. Состояние проекта
 
-Закрыто: T0 (блокеры запуска), T2-5/T2-6/T2-7/T2-7a/T2-8/T2-18/T2-19,
+Закрыто: T0 (блокеры запуска), T2-5/T2-6/T2-7/T2-7a/T2-8/T2-18/T2-19/T2-20,
 T3-3/T3-4/T3-5/T3-6/T3-9/T3-10, T4-1/T4-2/T4-5, T5-2/T5-6, T6-1…T6-6.
 Подробности и цифры — `docs/TASKS.md`, `docs/CHANGELOG.md`.
 
@@ -272,8 +282,8 @@ T3-3/T3-4/T3-5/T3-6/T3-9/T3-10, T4-1/T4-2/T4-5, T5-2/T5-6, T6-1…T6-6.
 | ID | Задача | Зачем |
 |---|---|---|
 | T2-17 | сверка маржи с отчётом брокера | `MARGIN_SHORT_UNCOVERED=True` — допущение; ждёт выписку |
-| T2-20 | мультиинструментальный прогон | 200+ сделок для статистики |
 | T2-21 | отчёт-вердикт | допущена / на доработку / отбракована |
+| T2-22 | календарь дивидендов (`GetDividends`) | фантомные гэпы на отсечках искажают PnL шортов и лонгов |
 | T3-7 | `Trade` / `LiveTrade` → общий `TradeRecord` | две модели сделки расходятся |
 | T2-4 | Alembic + перенос старых данных | ручные миграции |
 | T2-9 | Sortino/Calmar/VaR/R-multiple | метрики риска |

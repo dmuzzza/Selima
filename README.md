@@ -138,6 +138,7 @@ p_selima_v8.1/
 | Набор сделок до/после рефакторинга (индексы + PnL) | `uv run python scripts/trade_set_snapshot.py --tag before --ticker SBER --timeframe 4h`, затем `--compare before after` |
 | Null-тест: случайные входы против издержек | `uv run python scripts/null_test.py --tag synthetic` (код 1 при вердикте `optimism`) |
 | Heatmap TP/SL: плато или одна точка (Markdown + CSV в `debug/`) | `uv run python scripts/heatmap.py --ticker SBER --timeframe 4h --tag t2-19` |
+| Мультиинструмент: одно правило на 20 бумагах (Markdown + CSV + JSON) | `uv run python scripts/portfolio_run.py --tag t2-20` |
 | Чувствительность: издержки ×2 / TP-штраф / уровни от цены исполнения | `--spread-bps 4 --slippage-bps 6`, `--tp-penalty-bps 4`, `--levels-from-fill` |
 | Тесты | `uv run pytest` |
 | Линтер / типы | `uv run ruff check .` / `uv run mypy src` |
@@ -156,8 +157,8 @@ p_selima_v8.1/
 
 `CLEAN_SET` — список файлов/каталогов без legacy-долга (T1-7): сейчас
 `src/backtest/costs.py`, `src/backtest/exit_policy.py`, `src/backtest/heatmap.py`,
-`src/backtest/null_test.py`, `src/backtest/simulator.py`, `src/backtest/walk_forward.py`,
-`src/strategies/_null_entry`, `src/strategies/_template`,
+`src/backtest/null_test.py`, `src/backtest/portfolio.py`, `src/backtest/simulator.py`,
+`src/backtest/walk_forward.py`, `src/strategies/_null_entry`, `src/strategies/_template`,
 `src/strategies/strategy_registry.py`, `src/trading/pending_recovery.py`, `tests`.
 При исправлении legacy-файла путь **добавляется** в набор; удалять пути нельзя.
 

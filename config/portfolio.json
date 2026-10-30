@@ -1,0 +1,51 @@
+{
+  "version": "1",
+  "description": "Fixed multi-instrument set for T2-20. The list and the parameters are frozen before the run: changing either requires a new version and a new report.",
+  "strategy": "dual_ma_crossover_after_testing",
+  "timeframe": "4h",
+  "parameters": {
+    "tp_percent": 2.5,
+    "sl_percent": 2.0,
+    "position_size_percent": 100.0,
+    "allow_short": true
+  },
+  "initial_balance": 100000.0,
+  "selection_rule": [
+    "Liquid MOEX shares with at least 4 years of 4h history in the database.",
+    "One set of parameters for every ticker: no per-ticker tuning (ADR-022).",
+    "TP 2.5 / SL 2.0 is a non-edge cell of the SBER 4h heatmap, not the best one: the best cell (TP 3.0 / SL 2.5) had no plateau and would move overfitting onto 20 instruments (ADR-021, ADR-022).",
+    "The list is selected by today's liquidity, which is survivorship bias: delisted and merged tickers are absent. Recorded as a limitation in ADR-022."
+  ],
+  "tickers": [
+    "AFLT",
+    "ALRS",
+    "CHMF",
+    "GAZP",
+    "GMKN",
+    "IRAO",
+    "LKOH",
+    "MAGN",
+    "MGNT",
+    "MOEX",
+    "MTSS",
+    "NLMK",
+    "NVTK",
+    "PIKK",
+    "RTKM",
+    "SBER",
+    "SNGSP",
+    "TATN",
+    "TRNFP",
+    "VTBR"
+  ],
+  "excluded": {
+    "CRU6": "futures: different margin and tick model",
+    "CNYRUB_TOM": "currency pair: different margin model",
+    "GLDRUB_TOM": "currency pair: different margin model",
+    "POSI": "recent listing: short history distorts the comparison",
+    "HEAD": "recent listing: short history distorts the comparison",
+    "ASTR": "recent listing: short history distorts the comparison",
+    "SVCB": "recent listing: short history distorts the comparison"
+  },
+  "dividend_note": "Candles are not dividend-adjusted (verified on 2026-10-30: SBER 2024-07-11 -8.44%, SNGSP 2025-07-17 -14.06%). Ex-dividend gaps hit stops as if they were market moves; the report counts overnight gaps >= 3% per ticker."
+}
