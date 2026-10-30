@@ -6,6 +6,9 @@ from datetime import datetime, timedelta
 import pytest
 
 from src.backtest.portfolio import (
+    WITHOUT_BEST_TICKER,
+    WITHOUT_SBER,
+    WITHOUT_TWO_BEST,
     MultiInstrumentThresholds,
     PooledTrade,
     PortfolioConfig,
@@ -14,7 +17,9 @@ from src.backtest.portfolio import (
     block_bootstrap,
     build_report,
     classify_portfolio,
+    fragility_verdict,
     gap_series,
+    leave_one_out_variants,
     load_multi_instrument_thresholds,
     load_portfolio,
     mark_gap_affected,
@@ -549,3 +554,118 @@ def test_ticker_csv_has_one_row_per_ticker(tmp_path):
     rows = path.read_text(encoding="utf-8").strip().splitlines()
     assert rows[0].startswith("ticker,trades,net_rub")
     assert len(rows) == 3
+
+
+# ── leave-one-out ──────────────────────────────────────────────────────────
+
+
+def test_leave_one_out_drops_the_strongest_ticker_by_data():
+    items = [
+        pooled("SBER", 100.0, START + i * 10 * DAY) for i in range(10)
+    ] + [pooled("GAZP", 5_000.0, START + i * 10 * DAY) for i in range(10)]
+
+    variants = leave_one_out_variants(items, thresholds=THRESHOLDS, tickers=("SBER", "GAZP"))
+
+    without_best = next(v for v in variants if v.name == WITHOUT_BEST_TICKER)
+    # GAZP is the best by net RUB although SBER is first alphabetically.
+    assert without_best.excluded == ("GAZP",)
+    assert without_best.summary.trades == 10
+
+
+def test_leave_one_out_adds_sber_variant_only_when_configured():
+    items = [
+        pooled("SBER", 50.0, START + i * 10 * DAY) for i in range(10)
+    ] + [pooled("GAZP", 100.0, START + i * 10 * DAY) for i in range(10)]
+
+    with_sber = leave_one_out_variants(items, thresholds=THRESHOLDS, tickers=("SBER", "GAZP"))
+    without_sber_config = leave_one_out_variants(
+        items, thresholds=THRESHOLDS, tickers=("GAZP",)
+    )
+
+    assert any(v.name == WITHOUT_SBER for v in with_sber)
+    assert not any(v.name == WITHOUT_SBER for v in without_sber_config)
+
+
+def test_sber_variant_is_skipped_when_sber_is_the_best_ticker():
+    items = [
+        pooled("SBER", 5_000.0, START + i * 10 * DAY) for i in range(10)
+    ] + [pooled("GAZP", 50.0, START + i * 10 * DAY) for i in range(10)]
+
+    variants = leave_one_out_variants(items, thresholds=THRESHOLDS, tickers=("SBER", "GAZP"))
+
+    names = [variant.name for variant in variants]
+    assert WITHOUT_BEST_TICKER in names
+    assert WITHOUT_SBER not in names  # would duplicate the "without best" row
+
+
+def test_leave_one_out_adds_two_best_variant_only_for_three_or_more_tickers():
+    two = [pooled("SBER", 100.0, START), pooled("GAZP", 50.0, START)]
+    three = two + [pooled("LKOH", 10.0, START)]
+
+    assert not any(
+        v.name == WITHOUT_TWO_BEST
+        for v in leave_one_out_variants(two, thresholds=THRESHOLDS, tickers=("SBER", "GAZP"))
+    )
+    assert any(
+        v.name == WITHOUT_TWO_BEST
+        for v in leave_one_out_variants(
+            three, thresholds=THRESHOLDS, tickers=("SBER", "GAZP", "LKOH")
+        )
+    )
+
+
+def test_leave_one_out_recomputes_the_bootstrap_for_each_variant():
+    items = [
+        pooled("SBER", 100.0, START + i * 10 * DAY) for i in range(10)
+    ] + [pooled("GAZP", -100.0, START + i * 10 * DAY) for i in range(10)]
+
+    variants = leave_one_out_variants(items, thresholds=THRESHOLDS, tickers=("SBER", "GAZP"))
+    without_best = next(v for v in variants if v.name == WITHOUT_BEST_TICKER)
+
+    assert without_best.bootstrap.trades == without_best.summary.trades == 10
+    assert without_best.bootstrap.net_bps == pytest.approx(-100.0)
+    assert without_best.verdict == "negative"
+
+
+def test_leave_one_out_on_empty_pool_is_empty():
+    assert leave_one_out_variants([], thresholds=THRESHOLDS, tickers=("SBER",)) == ()
+
+
+def test_fragility_verdict_downgrades_positive_that_depends_on_one_ticker():
+    items = [
+        pooled("SBER", 100.0, START + i * 10 * DAY) for i in range(10)
+    ] + [pooled("GAZP", -100.0, START + i * 10 * DAY) for i in range(10)]
+    variants = leave_one_out_variants(items, thresholds=THRESHOLDS, tickers=("SBER", "GAZP"))
+
+    assert fragility_verdict("positive", variants) == "fragile"
+
+
+def test_fragility_verdict_keeps_positive_that_survives_without_the_best():
+    items = [
+        pooled("SBER", 100.0, START + i * 10 * DAY) for i in range(10)
+    ] + [pooled("GAZP", 100.0, START + i * 10 * DAY) for i in range(10)]
+    variants = leave_one_out_variants(items, thresholds=THRESHOLDS, tickers=("SBER", "GAZP"))
+
+    assert fragility_verdict("positive", variants) == "positive"
+
+
+@pytest.mark.parametrize("verdict", ["inconclusive", "negative", "insufficient_trades"])
+def test_fragility_verdict_does_not_touch_other_verdicts(verdict):
+    assert fragility_verdict(verdict, ()) == verdict
+
+
+def test_report_contains_leave_one_out_and_fragile_verdict():
+    items = [
+        PooledTrade("SBER", make_trade(START + i * 10 * DAY, 1_000.0)) for i in range(10)
+    ] + [
+        PooledTrade("GAZP", make_trade(START + i * 10 * DAY, -50.0)) for i in range(10)
+    ]
+
+    report = build_report(items, config=build_config(), thresholds=THRESHOLDS)
+    payload = report.describe()
+    text = render_markdown(report)
+
+    assert report.leave_one_out
+    assert payload["leave_one_out"][0]["name"] == WITHOUT_BEST_TICKER
+    assert "Leave-one-out" in text
+    assert "without best ticker" in text

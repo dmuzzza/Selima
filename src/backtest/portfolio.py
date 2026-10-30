@@ -609,6 +609,107 @@ def classify_portfolio(
 
 # ── reports ────────────────────────────────────────────────────────────────
 
+# Variant names are constants: the T2-21 verdict reads them from the snapshot.
+WITHOUT_BEST_TICKER = "without best ticker"
+WITHOUT_SBER = "without SBER"
+WITHOUT_TWO_BEST = "without two best tickers"
+
+
+@dataclass(frozen=True)
+class VariantResult:
+    """One sensitivity variant: which tickers were dropped and what is left."""
+
+    name: str
+    summary: PortfolioSummary
+    bootstrap: BlockBootstrap
+    verdict: str
+    excluded: tuple[str, ...] = ()
+
+    def describe(self) -> dict:
+        return {
+            "name": self.name,
+            "excluded": list(self.excluded),
+            "verdict": self.verdict,
+            "summary": self.summary.describe(),
+            "bootstrap": self.bootstrap.describe(),
+        }
+
+
+def _evaluate(
+    items: Sequence[PooledTrade], thresholds: MultiInstrumentThresholds
+) -> tuple[PortfolioSummary, BlockBootstrap, str]:
+    summary = summarize(items, thresholds)
+    bootstrap = block_bootstrap(
+        items,
+        block_days=thresholds.block_days,
+        iterations=thresholds.bootstrap_iterations,
+        alpha=thresholds.alpha,
+        seed=thresholds.seed,
+    )
+    return summary, bootstrap, classify_portfolio(summary, bootstrap, thresholds)
+
+
+def leave_one_out_variants(
+    pooled: Sequence[PooledTrade],
+    *,
+    thresholds: MultiInstrumentThresholds,
+    tickers: Sequence[str] = (),
+) -> tuple[VariantResult, ...]:
+    """Drop the strongest tickers and re-evaluate, with a fresh bootstrap each time.
+
+    The point is concentration: a positive average that disappears without one
+    instrument is not a property of the rule. "Best" is derived from the data
+    (largest net RUB), never hardcoded. "Without SBER" is added when SBER is in
+    the configured set, because the parameters were chosen on SBER and its trades
+    are not independent evidence.
+    """
+    if not pooled:
+        return ()
+    summary = summarize(pooled, thresholds)
+    ranked = [item.ticker for item in sorted(summary.per_ticker, key=lambda t: -t.net_rub)]
+    if not ranked:
+        return ()
+
+    variants: list[VariantResult] = []
+
+    def add(name: str, excluded: tuple[str, ...]) -> None:
+        remaining = [item for item in pooled if item.ticker not in excluded]
+        if not remaining:
+            return
+        variant_summary, variant_bootstrap, variant_verdict = _evaluate(remaining, thresholds)
+        variants.append(
+            VariantResult(
+                name=name,
+                summary=variant_summary,
+                bootstrap=variant_bootstrap,
+                verdict=variant_verdict,
+                excluded=excluded,
+            )
+        )
+
+    best = ranked[0]
+    add(WITHOUT_BEST_TICKER, (best,))
+    if "SBER" in {ticker.upper() for ticker in tickers} and best.upper() != "SBER":
+        add(WITHOUT_SBER, ("SBER",))
+    if len(ranked) >= 3:
+        add(WITHOUT_TWO_BEST, tuple(ranked[:2]))
+    return tuple(variants)
+
+
+def fragility_verdict(full_verdict: str, variants: Sequence[VariantResult]) -> str:
+    """Downgrade a positive verdict that does not survive dropping the best ticker.
+
+    T2-21 rule: if the full pool looks positive but the result turns negative or
+    inconclusive without the best instrument, the finding is `fragile`, not
+    `works`. The effect is concentrated, and one instrument is not evidence.
+    """
+    if full_verdict != "positive":
+        return full_verdict
+    for variant in variants:
+        if variant.name == WITHOUT_BEST_TICKER and variant.verdict != "positive":
+            return "fragile"
+    return full_verdict
+
 
 @dataclass
 class PortfolioReport:
@@ -625,6 +726,8 @@ class PortfolioReport:
     without_thin_summary: PortfolioSummary
     without_thin_bootstrap: BlockBootstrap
     without_thin_verdict: str
+    leave_one_out: tuple[VariantResult, ...] = ()
+    fragile_verdict: str = ""
     extra_meta: dict = field(default_factory=dict)
     snapshot_meta: dict = field(default_factory=dict)
 
@@ -637,9 +740,11 @@ class PortfolioReport:
             # they are needed for reproduction but unreadable in Markdown.
             **self.snapshot_meta,
             "verdict": self.verdict,
+            "fragile_verdict": self.fragile_verdict,
             "summary": self.summary.describe(),
             "bootstrap": self.bootstrap.describe(),
             "tickers": [summary.describe() for summary in self.summary.per_ticker],
+            "leave_one_out": [variant.describe() for variant in self.leave_one_out],
             "without_gap_affected": {
                 "verdict": self.without_gaps_verdict,
                 "summary": self.without_gaps_summary.describe(),
@@ -661,25 +766,17 @@ def build_report(
     extra_meta: Mapping[str, object] | None = None,
     snapshot_meta: Mapping[str, object] | None = None,
 ) -> PortfolioReport:
-    """Summarise the pool three ways: all trades, without gaps, without thin tickers."""
+    """Summarise the pool: all trades, without gaps, without thin, leave-one-out."""
 
-    def evaluate(items: Sequence[PooledTrade]) -> tuple[PortfolioSummary, BlockBootstrap, str]:
-        summary = summarize(items, thresholds)
-        bootstrap = block_bootstrap(
-            items,
-            block_days=thresholds.block_days,
-            iterations=thresholds.bootstrap_iterations,
-            alpha=thresholds.alpha,
-            seed=thresholds.seed,
-        )
-        return summary, bootstrap, classify_portfolio(summary, bootstrap, thresholds)
-
-    summary, bootstrap, verdict = evaluate(pooled)
+    summary, bootstrap, verdict = _evaluate(pooled, thresholds)
     clean = [item for item in pooled if not item.gap_affected]
-    clean_summary, clean_bootstrap, clean_verdict = evaluate(clean)
+    clean_summary, clean_bootstrap, clean_verdict = _evaluate(clean, thresholds)
     thin = set(summary.thin_tickers)
     solid = [item for item in pooled if item.ticker not in thin]
-    solid_summary, solid_bootstrap, solid_verdict = evaluate(solid)
+    solid_summary, solid_bootstrap, solid_verdict = _evaluate(solid, thresholds)
+    variants = leave_one_out_variants(
+        pooled, thresholds=thresholds, tickers=config.tickers
+    )
 
     return PortfolioReport(
         config=config,
@@ -693,6 +790,8 @@ def build_report(
         without_thin_summary=solid_summary,
         without_thin_bootstrap=solid_bootstrap,
         without_thin_verdict=solid_verdict,
+        leave_one_out=variants,
+        fragile_verdict=fragility_verdict(verdict, variants),
         extra_meta=dict(extra_meta or {}),
         snapshot_meta=dict(snapshot_meta or {}),
     )
@@ -724,6 +823,11 @@ def render_markdown(report: PortfolioReport) -> str:
     lines.append("## Verdict")
     lines.append("")
     lines.append(f"- **verdict**: `{report.verdict}`")
+    if report.fragile_verdict != report.verdict:
+        lines.append(
+            f"- **after leave-one-out**: `{report.fragile_verdict}` — the positive result "
+            "does not survive dropping the best ticker (T2-21 rule)"
+        )
     lines.append(f"- **trades**: {summary.trades} (minimum {thresholds.min_total_trades})")
     lines.append(f"- **net**: {summary.net_rub:+.2f} RUB, {summary.net_bps:+.2f} bps/trade")
     lines.append(
@@ -784,6 +888,30 @@ def render_markdown(report: PortfolioReport) -> str:
             f"[{variant_bootstrap.ci_low:+.2f}; {variant_bootstrap.ci_high:+.2f}] | "
             f"`{variant_verdict}` |"
         )
+    lines.append("")
+
+    lines.append("## Leave-one-out")
+    lines.append("")
+    if report.leave_one_out:
+        lines.append(
+            "Concentration check: the strongest tickers are dropped by net RUB (derived "
+            "from the data, not by name) and the bootstrap is recomputed. A positive "
+            "verdict that does not survive dropping the best ticker is `fragile`, not "
+            "`works` (T2-21 rule)."
+        )
+        lines.append("")
+        lines.append("| variant | excluded | trades | net RUB | net bps | CI95 | verdict |")
+        lines.append("|---|---|---|---|---|---|---|")
+        for variant in report.leave_one_out:
+            lines.append(
+                f"| {variant.name} | {', '.join(variant.excluded)} | "
+                f"{variant.summary.trades} | {variant.summary.net_rub:+.2f} | "
+                f"{variant.summary.net_bps:+.2f} | "
+                f"[{variant.bootstrap.ci_low:+.2f}; {variant.bootstrap.ci_high:+.2f}] | "
+                f"`{variant.verdict}` |"
+            )
+    else:
+        lines.append("Not applicable: the pool has a single ticker.")
     lines.append("")
 
     lines.append("## Gaps")
