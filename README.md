@@ -89,7 +89,7 @@ p_selima_v8.1/
 ├── scheduler_notifier.py    # только сигналы + уведомления в VK
 ├── app_dashboard.py         # legacy-дашборд-монолит (~1800 строк)
 ├── dashboard/               # актуальный дашборд (пакет)
-├── config/                  # instruments.json, costs.json, комиссии, лимиты
+├── config/                  # instruments.json, costs.json, tp_sl.json, комиссии, лимиты
 ├── src/                     # ядро: brokers, market_data, strategies, trading, ...
 ├── migrations/              # ручные миграции (SQLite legacy + PostgreSQL signal_key)
 ├── scripts/                 # одноразовые утилиты и экспорт
@@ -135,6 +135,7 @@ p_selima_v8.1/
 | Разложение издержек по двум снапшотам | `uv run python scripts/cost_audit.py debug/baseline_pnl_a.json debug/baseline_pnl_b.json` |
 | Атрибуция по цепочке gross → +market → +net | `uv run python scripts/cost_audit.py --chain debug/baseline_pnl_gross.json debug/baseline_pnl_market.json debug/baseline_pnl_net.json` |
 | Bootstrap-CI для OOS-expectancy | `uv run python scripts/cost_audit.py --oos debug/walk_forward_net.json` |
+| Набор сделок до/после рефакторинга (индексы + PnL) | `uv run python scripts/trade_set_snapshot.py --tag before --ticker SBER --timeframe 4h`, затем `--compare before after` |
 | Чувствительность: издержки ×2 / TP-штраф / уровни от цены исполнения | `--spread-bps 4 --slippage-bps 6`, `--tp-penalty-bps 4`, `--levels-from-fill` |
 | Тесты | `uv run pytest` |
 | Линтер / типы | `uv run ruff check .` / `uv run mypy src` |
@@ -194,5 +195,11 @@ p_selima_v8.1/
   порог 5 000 ₽, внутридневная сделка не платит. Шорт по умолчанию считается непокрытым
   (`MARGIN_SHORT_UNCOVERED=1`) — это консервативное допущение, не сверенное с отчётом
   брокера (T2-17, ADR-018).
+- **TP/SL задаются конфигом, а не кодом.** `config/tp_sl.json` содержит блок на
+  стратегию: `by_ticker` (таймфрейм → тикер) или `by_timeframe`. Отсутствие ключа —
+  ошибка `MissingExitPolicyError`, а не подстановка `1.5 / 1.0`. Файл версионируется
+  (`version` + `sha256`), и отчёты пишут `tp_sl_version`, чтобы прогоны с разными
+  уровнями нельзя было перепутать (ADR-019). Сейчас `dual_ma` покрывает 21 инструмент
+  из 44 на 4h; остальные пропускаются с `ERROR` (T3-4a).
 - `TEST_MODE=true` генерирует фиктивные сигналы вместо рыночных.
 - `account_id` в логах маскируется (`***1234`); ключ шифрования не логируется.

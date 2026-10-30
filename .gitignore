@@ -30,6 +30,7 @@ dist/
 debug/_old/
 debug/baseline_pnl*.json
 debug/walk_forward*.json
+debug/trade_set_*.json
 *.db
 *.db-journal
 *.sqlite3

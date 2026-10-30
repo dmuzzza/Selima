@@ -147,8 +147,9 @@ def check_last_signal(self, candles: List[Candle]) -> Optional[Signal]:
 
 **ДЕФЕКТ v1 (устранён, T0-3):** метод копировался дословно в каждой стратегии. Теперь он
 реализован в `BaseStrategy` и использует `self.tp_percent`/`self.sl_percent`, которые
-базовый класс берёт из конфига (`tp_percent`/`sl_percent`, дефолты 1.5/1.0), а подкласс
-может переопределить своими значениями.
+берутся из `ExitPolicy`: явные `tp_percent`/`sl_percent` в конфиге либо
+`config/tp_sl.json` по `(code, timeframe, ticker)` (T3-4, ADR-019). Дефолтной пары
+`1.5 / 1.0` больше нет — отсутствующий ключ это `MissingExitPolicyError`.
 
 ---
 
@@ -179,26 +180,23 @@ class BaseStrategy(ABC):
 
 ```python
 # src/backtest/simulator.py
-@dataclass(frozen=True)
-class ExitRules:              # задаёт стратегия ИЛИ конфиг
-    tp_percent: float
-    sl_percent: float
-    breakeven: BreakevenRules | None = None
-    max_hold_bars: int | None = None
-
 class TradeSimulator:
-    def __init__(self, rules: ExitRules, sizing: SizingRules, costs: CostModel): ...
+    def __init__(self, exit_policy: ExitPolicy, sizing: SizingRules, costs: CostModel): ...
     def run(self, candles: list[Candle], signals: list[Signal]) -> list[Trade]: ...
 ```
 
 ```python
-# src/strategies/exit_policy.py
+# src/backtest/exit_policy.py
 class ExitPolicy(Protocol):
-    """Как считать TP/SL. Дефолт — проценты от входа."""
-    def build(self, signal: Signal, candle: Candle, ctx: MarketContext) -> ExitRules: ...
+    """Как считать TP/SL. Сейчас единственная реализация — проценты от входа."""
+    tp_percent: float
+    sl_percent: float
+    def levels(self, entry_price: float, is_long: bool) -> tuple[float, float]: ...
+    def describe(self) -> dict: ...   # попадает в отчёты вместе с tp_sl_version
 ```
 
-Стратегия может переопределить `exit_policy`, если выход не процентный (по уровню, ATR),
+`PercentExitPolicy` читается из `config/tp_sl.json` (`version` + `sha256`, ADR-019).
+Стратегия может переопределить политику, если выход не процентный (по уровню, ATR),
 но **не реализует сам цикл симуляции**.
 
 Что переезжает в базу/движок:
@@ -210,7 +208,7 @@ class ExitPolicy(Protocol):
 | `execute_live_trades()` (копия) | `BaseStrategy.execute_live_trades()` |
 | `_calculate_pnl`, `_calculate_commissions`, `_apply_breakeven`, `_calculate_mfe_mae`, `_calculate_post_entry_moves` | уже в базе — оставить |
 | `calculate_stats()` | уже в базе — оставить |
-| TP/SL по тикерам (`dual_ma_crossover_after_testing/config.py`) | `ExitPolicy` + конфиг, валидируемый pydantic |
+| TP/SL по тикерам (`dual_ma_crossover_after_testing/config.py`) | `config/tp_sl.json` + `ExitPolicy` (сделано, T3-4) |
 
 ### Как выглядит новая стратегия после v2
 
@@ -270,7 +268,8 @@ class RSIReversalStrategy(BaseStrategy):
 4. `detect_signals` — чистая, без сети/БД/`datetime.now()`, возвращает `[]` при нехватке данных.
 5. `check_last_signal` не переопределяется (или переопределяется с тем же критерием).
 6. `execute_trades` не пишется — используется `TradeSimulator` (после v2).
-7. TP/SL берутся из `config` или `ExitPolicy`, не из литералов в коде.
+7. TP/SL берутся из `config/tp_sl.json` (через `ExitPolicy`), не из литералов в коде;
+   отсутствующий ключ — `MissingExitPolicyError`, дефолта нет (ADR-019).
 8. Регистрация: ничего править не нужно — `@register_strategy` + пакет внутри
    `src/strategies`. Обязательное условие: `__init__.py` пакета импортирует `strategy`
    (иначе декоратор не выполнится при автообнаружении). Реестр — ADR-014.
@@ -288,7 +287,7 @@ class RSIReversalStrategy(BaseStrategy):
 | Антипаттерн | Пример в текущем коде |
 |---|---|
 | Бизнес-логика в точке входа | `scheduler._process_instrument` создаёт стратегию на каждый инструмент |
-| Конфиг в виде литералов | TP/SL по тикерам в `dual_ma_crossover_after_testing/config.py:32-57` |
+| Конфиг в виде литералов | TP/SL по тикерам в `dual_ma_crossover_after_testing/config.py:32-57` (вынесено в `config/tp_sl.json`, T3-4) |
 | Глобальные переключатели | `DRY_RUN`, `TEST_MODE`, `COMMISSION_MODE` в модулях |
 | Импорт внутри функции | `from src.strategies.indicators_builder import IndicatorsBuilder` в методах (`strategy.py:135,154`) |
 | Молчаливое проглатывание ошибок | `except Exception: return [None] * len(candles)` в расчёте индикаторов |
@@ -305,8 +304,8 @@ class RSIReversalStrategy(BaseStrategy):
 | 1 | ~~Добавить `check_last_signal` и `execute_live_trades` в `BaseStrategy`~~ — **сделано (T0-3)** | — |
 | 2 | ~~Удалить копии этих методов из стратегий~~ — **сделано для `src/strategies/sma_crossover/`; остальные копии удаляются в T1-2** | — |
 | 3 | ~~`code`/`name`/`description` — атрибуты класса, регистрация декоратором, автообнаружение~~ — **сделано (T3-6, ADR-014)** | — |
-| 4 | Вынести цикл TP/SL в `TradeSimulator`, стратегии вызывают его | средний: сверить PnL до/после на истории |
-| 5 | Ввести `ExitRules`/`ExitPolicy`, перенести TP/SL-таблицы в конфиг | средний |
+| 4 | ~~Вынести цикл TP/SL в `TradeSimulator`, стратегии вызывают его~~ — **сделано (T3-3)** | — |
+| 5 | ~~Ввести `ExitPolicy`, перенести TP/SL-таблицы в конфиг~~ — **сделано (T3-4, ADR-019)** | — |
 | 6 | Перевести `LiveTrade` и `Trade` на общий `TradeRecord` (или явный маппер) | высокий |
 | 7 | Добавить тест-паритет: `detect_signals` vs `check_last_signal`, бэктест vs live-параметры | — |
 
@@ -343,7 +342,7 @@ class RSIReversalStrategy(BaseStrategy):
 | Комиссия | третья строка, остаётся в `BaseStrategy._calculate_commissions` |
 | Вход, SL, гэп | маркет: ½ спреда + проскальзывание против трейдера |
 | TP | лимитка: исполняется по уровню, издержек не платит |
-| Уровни TP/SL | считаются от **оплаченной** цены входа; касание проверяется по сырым `high`/`low` |
+| Уровни TP/SL | бэктест: от **сырого** `open` (издержки меняют только цену исполнения, ADR-017); live: от оплаченной цены входа. Касание проверяется по сырым `high`/`low` |
 
 Отчёт без издержек помечается `GROSS` / `tradable=false`. OOS-прогон и кандидат в live
 обязаны считаться с ненулевыми издержками; `scripts/walk_forward.py` такие прогоны

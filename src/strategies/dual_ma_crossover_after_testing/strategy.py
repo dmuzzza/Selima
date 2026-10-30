@@ -62,10 +62,8 @@ class DualMACrossoverStrategy(BaseStrategy):
         # MA параметры
         self.sma_period = self.config.get("sma_period", 50)
         self.adaptive_period = self.config.get("adaptive_period", 14)
-        
-        # TP/SL параметры
-        self.tp_percent = self.config.get("tp_percent", 1.5)
-        self.sl_percent = self.config.get("sl_percent", 1.0)
+
+        # TP/SL выставляет BaseStrategy из config/tp_sl.json (T3-4, ADR-019)
 
         # EMA фильтр
         self.use_ema_filter = self.config.get("use_ema_filter", False)

@@ -15,6 +15,7 @@ env:
   CLEAN_SET: >-
     config/commissions.py
     src/backtest/costs.py
+    src/backtest/exit_policy.py
     src/backtest/simulator.py
     src/backtest/walk_forward.py
     src/strategies/_template

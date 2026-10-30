@@ -20,6 +20,7 @@ to debug/ (git-ignored).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -196,10 +197,17 @@ def collect(args: argparse.Namespace) -> dict:
 
     evaluated = [r for r in runs if r["status"] == "ok"]
     rejected = [r for r in runs if r["status"] == "gross_rejected"]
+    grid = build_grid(args.tp, args.sl)
     return {
         "strategy": args.strategy,
         "tag": args.tag,
-        "grid": build_grid(args.tp, args.sl),
+        # TP/SL come from the grid, not from config/tp_sl.json (ADR-019); the
+        # fingerprint of the grid makes two reports comparable.
+        "tp_sl_source": "grid",
+        "tp_sl_grid_sha256": hashlib.sha256(
+            json.dumps(grid, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:12],
+        "grid": grid,
         "train_days": args.train_days,
         "test_days": args.test_days,
         "step_days": args.step_days or args.test_days,

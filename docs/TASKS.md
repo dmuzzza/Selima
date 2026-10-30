@@ -116,7 +116,8 @@ ImportError; в логах нет токенов и `account_id`.
 | T3-1 | Зафиксировать контракт v1 (фактические модели и методы) — **сделано** в `STRATEGY_CONTRACT.md` §2–3 | S | done |
 | T3-2 | Добавить в `BaseStrategy` дефолтные `check_last_signal()` и `execute_live_trades()`, удалить копии из стратегий | M | done |
 | T3-3 | Вынести цикл TP/SL в `src/backtest/simulator.py` (`TradeSimulator`, `ExitRules`, `SizingRules`, `CostModel`); стратегии вызывают движок | L | done (движок + `BaseStrategy.execute_trades`; `CostModel` остался в `BaseStrategy._calculate_commissions`) |
-| T3-4 | Ввести `ExitPolicy` (протокол) + реализацию `PercentExitPolicy`; перенести TP/SL по тикерам в конфиг | M | todo |
+| T3-4 | Ввести `ExitPolicy` (протокол) + реализацию `PercentExitPolicy`; перенести TP/SL по тикерам в конфиг | M | done (ADR-019: `config/tp_sl.json` + `version`/`sha256`, `MissingExitPolicyError` вместо дефолта, `tp_sl_version` в отчётах; baseline `a16ec63` — 12 прогонов, `mismatched=0`) |
+| T3-4a | Заполнить `config/tp_sl.json` для остальных инструментов и таймфреймов: сейчас `dual_ma` покрывает 21/44 на 4h и 0 на 1h/1d, такие прогоны пропускаются | M | todo (значения — из walk-forward, не вручную) |
 | T3-5 | Исправить модель исполнения в симуляторе: `position_size_percent`, несколько позиций, порядок TP/SL по фактическому касанию, гэпы, `exit_time` | M | done (T3-5a/b/c: SL-first, гэпы по `open`, `exit_time` = конец бара; ADR-012) |
 | T3-5d | Несколько позиций одновременно (сейчас одна на инструмент) | L | todo |
 | T3-6 | Ввести `code`/`name`/`description` как атрибуты класса; реестр — через декоратор `@register_strategy` (убрать ручные импорты) | S | done (ADR-014: атрибуты `ClassVar`, автообнаружение пакетов, ручные импорты удалены) |

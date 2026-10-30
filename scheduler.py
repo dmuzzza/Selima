@@ -27,6 +27,7 @@ from apscheduler.triggers.cron import CronTrigger
 from src.market_data.data_updater import DataUpdater
 from src.market_data.history_manager import HistoryManager
 from src.market_data.timeframe import Timeframe
+from src.backtest.exit_policy import MissingExitPolicyError
 from src.brokers.broker_factory import BrokerFactory
 from src.trading.account_selector import AccountSelector
 from src.trading.orchestrator import TradingOrchestrator
@@ -472,12 +473,17 @@ class TradingScheduler:
         
         logger.info(f"   📊 Candles: {len(candles)}")
         
-        # Создаём стратегию
-        strategy = DualMACrossoverStrategy(
-            timeframe=timeframe,
-            config=None,  # Используется дефолтный конфиг
-            debug=False
-        )
+        # Создаём стратегию. Ticker обязателен: TP/SL берутся из
+        # config/tp_sl.json по (strategy, timeframe, ticker), дефолта нет (T3-4).
+        try:
+            strategy = DualMACrossoverStrategy(
+                timeframe=timeframe,
+                config={"ticker": instrument.ticker},
+                debug=False
+            )
+        except MissingExitPolicyError as exc:
+            logger.error(f"⛔ TP/SL not configured for {instrument.ticker} {timeframe}: {exc}")
+            return {"signals_count": 0, "trades_count": 0}
         
         signal = strategy.check_last_signal(candles)
         

@@ -4,6 +4,9 @@ The engine replays signals over candles and applies exit rules (TP/SL). It is
 deliberately small: strategies provide signals and, optionally, an entry filter;
 everything related to position sizing, exits and PnL is handled here once.
 
+Levels come from an `ExitPolicy` (`src/backtest/exit_policy.py`, ADR-019): the
+engine never knows whether they are percentages, ATR multiples or levels.
+
 Known limitations, kept as-is to preserve historical backtest results and to be
 addressed separately (T3-5):
 
@@ -29,6 +32,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from src.backtest.costs import ZERO_COSTS, CostModel
+from src.backtest.exit_policy import ExitPolicy
 from src.market_data.models import Candle
 from src.strategies.base_strategy import Signal, Trade
 
@@ -36,24 +40,6 @@ from src.strategies.base_strategy import Signal, Trade
 EntryFilter = Callable[[int, Candle, Signal], bool]
 # on_close(trade, balance_at_entry) -> None; fills pnl_abs/pnl_percent on the trade
 CloseHandler = Callable[[Trade, float], None]
-
-
-@dataclass(frozen=True)
-class ExitRules:
-    """Take profit and stop loss as percentages from the entry price."""
-
-    tp_percent: float
-    sl_percent: float
-
-    def levels(self, entry_price: float, is_long: bool) -> tuple[float, float]:
-        """Return (tp_level, sl_level) for the given entry."""
-        if is_long:
-            tp_level = entry_price * (1 + self.tp_percent / 100.0)
-            sl_level = entry_price * (1 - self.sl_percent / 100.0)
-        else:
-            tp_level = entry_price * (1 - self.tp_percent / 100.0)
-            sl_level = entry_price * (1 + self.sl_percent / 100.0)
-        return tp_level, sl_level
 
 
 @dataclass(frozen=True)
@@ -74,7 +60,7 @@ class TradeSimulator:
     def __init__(
         self,
         *,
-        exit_rules: ExitRules,
+        exit_policy: ExitPolicy,
         sizing: SizingRules,
         on_close: CloseHandler,
         entry_filter: EntryFilter | None = None,
@@ -85,7 +71,7 @@ class TradeSimulator:
         logger=None,
         debug: bool = False,
     ) -> None:
-        self.exit_rules = exit_rules
+        self.exit_policy = exit_policy
         self.sizing = sizing
         self.on_close = on_close
         self.entry_filter = entry_filter
@@ -231,7 +217,7 @@ class TradeSimulator:
             # and the trade set stays identical across cost scenarios (ADR-017).
             # `levels_from_fill` switches to the live convention for sensitivity.
             levels_base = entry_price if self.levels_from_fill else candle.open
-            tp_level, sl_level = self.exit_rules.levels(levels_base, is_long=is_long)
+            tp_level, sl_level = self.exit_policy.levels(levels_base, is_long=is_long)
 
             trade = Trade(
                 trade_id=trade_id,

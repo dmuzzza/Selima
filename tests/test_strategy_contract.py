@@ -27,7 +27,7 @@ def make_candles(prices: list[float]) -> list[Candle]:
 
 @pytest.fixture
 def dual_ma() -> DualMACrossoverStrategy:
-    return DualMACrossoverStrategy(timeframe="4h")
+    return DualMACrossoverStrategy(timeframe="4h", config={"ticker": "SBER"})
 
 
 @pytest.fixture
@@ -49,9 +49,12 @@ def test_subclasses_do_not_duplicate_live_methods(sma):
     assert "execute_live_trades" not in SMACrossoverStrategy.__dict__
 
 
-def test_tp_sl_defaults_come_from_config(dual_ma):
-    assert isinstance(dual_ma.tp_percent, float)
-    assert isinstance(dual_ma.sl_percent, float)
+def test_tp_sl_come_from_the_exit_policy_file(dual_ma):
+    """SBER 4h: 2.3/2.2 from config/tp_sl.json, not a hard-coded default (T3-4)."""
+    assert dual_ma.tp_percent == pytest.approx(2.3)
+    assert dual_ma.sl_percent == pytest.approx(2.2)
+    assert dual_ma.exit_policy.describe()["mode"] == "percent"
+    assert dual_ma.exit_policy.describe()["tp_sl_version"].startswith("1+")
 
 
 def test_check_last_signal_handles_empty(dual_ma):

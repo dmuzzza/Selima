@@ -7,6 +7,20 @@
 
 ### Added
 
+- `src/backtest/exit_policy.py`: `ExitPolicy` (протокол) + `PercentExitPolicy`;
+  `ExitPolicyConfig` с версией и `sha256` (формат `version+sha12`),
+  `MissingExitPolicyError`, `resolve_exit_policy()` (T3-4, ADR-019).
+- `config/tp_sl.json` версии 1: TP/SL по стратегиям — `by_ticker` (dual_ma,
+  timeframe → ticker) и `by_timeframe` (sma_crossover, template). Значения
+  перенесены из `DEFAULT_CONFIG` 1:1.
+- `scripts/trade_set_snapshot.py`: снапшот набора сделок (индексы входа/выхода,
+  направление, `exit_type`, `exit_reason`, уровни, три слоя PnL) и строгое
+  сравнение `--compare`; допуск только по деньгам — 0.005 ₽.
+- `tests/test_exit_policy.py`: 15 тестов политики — резолв из файла, ошибки на
+  неизвестный тикер/таймфрейм/стратегию, приоритет явного конфига, «половина
+  пары», хеш не зависит от форматирования, уровни от сырого `open` с издержками.
+- Отчёты пишут `exit_policy.tp_sl_version` (`pnl_baseline`, `trade_set_snapshot`);
+  walk-forward — `tp_sl_source: "grid"` и `tp_sl_grid_sha256`.
 - `config/commissions.py`: маржинальная плата по тарифу брокера — только на непокрытую
   часть позиции, порог `MARGIN_MIN_UNCOVERED = 5 000 ₽`, `margin_nights()` (0 для
   внутридневной сделки). Флаг `MARGIN_SHORT_UNCOVERED` (env), по умолчанию `True`:
@@ -28,6 +42,14 @@
 
 ### Changed
 
+- `TradeSimulator` принимает `exit_policy` вместо `exit_rules`; `ExitRules` удалён
+  (ADR-019).
+- `BaseStrategy` резолвит TP/SL через `resolve_exit_policy()`: явные
+  `tp_percent`+`sl_percent` в конфиге имеют приоритет, иначе — `config/tp_sl.json`.
+- `dual_ma_crossover_after_testing` и `sma_crossover`: таблицы TP/SL удалены из
+  `DEFAULT_CONFIG`; `get_config()` больше не подставляет `1.5 / 1.0`.
+- `_template`: TP/SL убраны из конфига, шаблон ссылается на `config/tp_sl.json`.
+- `CLEAN_SET` расширен: `src/backtest/exit_policy.py`.
 - `config/costs.json` версия 1 → 2: `tick_size` CRU6 0.01 → 0.001 (шаг цены MOEX CNY,
   стоимость шага 1 ₽, лот 1000 CNY). Тиковые издержки CRU6 были завышены в 10 раз:
   слой издержек рынка −1 977.56 → −200.58 ₽, net при `MARGIN_SHORT_UNCOVERED=0`
@@ -36,6 +58,13 @@
 
 ### Fixed
 
+- Live-путь (`scheduler.py`, `scheduler_notifier.py`) создавал стратегию без
+  тикера, поэтому **все** инструменты торговали с фолбэком `TP 1.5% / SL 1.0%`
+  вместо значений из конфига. Теперь тикер передаётся, при отсутствии ключа
+  пишется `ERROR` и инструмент пропускается.
+- Молчаливые дефолты TP/SL удалены: отсутствующий тикер — `MissingExitPolicyError`
+  с перечнем доступных ключей.
+- `dashboard/compute.py` передаёт тикер при создании стратегии.
 - Маржинальная плата начислялась на всё тело позиции и минимум за один день, из-за чего
   при `position_size_percent <= 100` позиция на собственные средства платила маржу.
   SBER 4h: 3 760 ₽ фиктивной платы при режиме «шорт непокрыт», 0 ₽ — при покрытом.

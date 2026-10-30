@@ -36,10 +36,17 @@ def _calculate_avg_mae(trades: List[Trade]) -> float:
     return sum(valid_mae) / len(valid_mae) if valid_mae else 0.0
 
 
-def _get_initial_balance(strategy_code: str, timeframe: str) -> float:
-    """Получить initial_balance из конфига стратегии."""
+def _get_initial_balance(strategy_code: str, timeframe: str, ticker: Optional[str] = None) -> float:
+    """Получить initial_balance из конфига стратегии.
+
+    Ticker нужен, потому что TP/SL резолвятся из config/tp_sl.json при создании
+    стратегии и отсутствие ключа — ошибка (T3-4). Баланс от TP/SL не зависит,
+    поэтому при неудаче используется DEFAULT_INITIAL_BALANCE.
+    """
     try:
-        temp = StrategyFactory.create(strategy_code, timeframe, debug=False)
+        temp = StrategyFactory.create(
+            strategy_code, timeframe, config={"ticker": ticker} if ticker else None, debug=False
+        )
         return temp.config.get("initial_balance", DEFAULT_INITIAL_BALANCE)
     except Exception as e:
         logger.warning(f"Failed to get initial_balance from strategy, using default: {e}")
@@ -99,7 +106,9 @@ def run_strategy_for_ticker(
             logger.warning(f"Skipping {ticker}: insufficient data")
             return None
 
-        strategy = StrategyFactory.create(strategy_code, timeframe, debug=False)
+        strategy = StrategyFactory.create(
+            strategy_code, timeframe, config={"ticker": ticker}, debug=False
+        )
         result = strategy.run(candles)
         stats = result["stats"]
 
@@ -195,7 +204,7 @@ def compute_aggregate_stats(
         return {}
 
     summary_list = [r["summary"] for r in results]
-    initial_balance = _get_initial_balance(strategy_code, timeframe)
+    initial_balance = _get_initial_balance(strategy_code, timeframe, results[0].get("ticker"))
 
     total_trades = sum(r["total_trades"] for r in summary_list)
     closed_trades = sum(r["closed_trades"] for r in summary_list)
@@ -288,7 +297,7 @@ def compute_monthly_breakdown(
     loss_list = []
     hold_list = []
 
-    initial_balance = _get_initial_balance(strategy_code, timeframe)
+    initial_balance = _get_initial_balance(strategy_code, timeframe, results[0].get("ticker"))
     running_balance = initial_balance
 
     for m in sorted_months:

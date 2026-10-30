@@ -2,7 +2,9 @@
 Template Strategy Configuration
 
 Copy this file together with the package and replace the parameters.
-TP/SL live here, not in the strategy code: they are per-timeframe data, not logic.
+TP/SL do not live here: they are per-strategy data in `config/tp_sl.json`
+(ADR-019). Add a `template` block there (or a block under your own strategy
+code) — a missing key is an error, there is no fallback pair.
 """
 
 DEFAULT_CONFIG = {
@@ -12,12 +14,6 @@ DEFAULT_CONFIG = {
     "allow_short": False,
     # Strategy parameters
     "sma_period": 50,
-    # TP/SL per timeframe
-    "timeframes": {
-        "1h": {"tp_percent": 1.2, "sl_percent": 0.7},
-        "4h": {"tp_percent": 3.5, "sl_percent": 1.0},
-        "1d": {"tp_percent": 3.5, "sl_percent": 2.6},
-    },
 }
 
 
@@ -35,15 +31,12 @@ def get_config(timeframe: str, custom_config: dict | None = None) -> dict:
         custom_config: Overrides applied on top of the defaults
 
     Returns:
-        dict: Configuration with `tp_percent`/`sl_percent` resolved for the timeframe
+        dict: Configuration; TP/SL are resolved by `BaseStrategy` from
+        `config/tp_sl.json` unless given explicitly in `custom_config`
     """
     config = get_default_config()
 
     if custom_config:
         config.update(custom_config)
-
-    tf_config = config["timeframes"].get(timeframe, {})
-    config["tp_percent"] = tf_config.get("tp_percent", 1.5)
-    config["sl_percent"] = tf_config.get("sl_percent", 1.0)
 
     return config

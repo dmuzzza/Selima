@@ -63,7 +63,7 @@ mypy --follow-imports=silent $CLEAN_SET
 pytest -q                    # все тесты, не только CLEAN_SET
 ```
 
-Текущее состояние: **143 теста зелёные** (на момент написания файла). Не коммитить
+Текущее состояние: **158 тестов зелёные** (на момент написания файла). Не коммитить
 с падающими тестами.
 
 `mypy` в `pyproject.toml` исключает `scripts/` — скрипты не типизируются, но обязаны
@@ -132,7 +132,8 @@ pytest -q                    # все тесты, не только CLEAN_SET
 | `src/strategies/strategy_factory.py` | создание стратегии по коду | `StrategyFactory.create` |
 | `src/strategies/_template/` | шаблон новой стратегии | `TemplateStrategy` |
 | `src/strategies/sma_crossover/`, `dual_ma_crossover_after_testing/` | рабочие стратегии | — |
-| `src/backtest/simulator.py` | единственный цикл TP/SL | `TradeSimulator`, `ExitRules`, `SizingRules` |
+| `src/backtest/simulator.py` | единственный цикл TP/SL | `TradeSimulator`, `SizingRules` |
+| `src/backtest/exit_policy.py` | откуда берутся TP/SL | `ExitPolicy`, `PercentExitPolicy`, `resolve_exit_policy`, `MissingExitPolicyError` |
 | `src/backtest/costs.py` | спред/проскальзывание/комиссия | `BpsCosts`, `TickCosts`, `load_costs`, `CostModel` |
 | `src/backtest/walk_forward.py` | train/test окна, OOS-оценка | `generate_windows`, `run_walk_forward` |
 | `src/market_data/` | свечи: модели, таймфреймы, PostgreSQL | `Candle`, `Timeframe`, `HistoryManager` |
@@ -142,7 +143,7 @@ pytest -q                    # все тесты, не только CLEAN_SET
 | `src/trading/` (репозитории) | `live_trades`, стоп-ордера, сверка | `PgLiveTradeRepository`, `TradingReconciler` |
 | `scheduler.py`, `scheduler_notifier.py` | расписание P0/P1/P2 | `_startup_reconcile`, `monitor_open_positions` |
 | `dashboard/` | актуальный дашборд | `app.py`, `ui/layout.py` |
-| `config/` | инструменты, издержки, комиссии, лимиты | `instruments.json`, `costs.json`, `commissions.py` |
+| `config/` | инструменты, издержки, комиссии, лимиты | `instruments.json`, `costs.json`, `tp_sl.json`, `commissions.py` |
 
 Поток данных и торговый цикл — `docs/ARCHITECTURE.md` §5–§6 (Mermaid).
 
@@ -203,6 +204,9 @@ in-sample положительный, OOS отрицательный: **в live 
 
 **Стратегии** (`docs/STRATEGY_CONTRACT.md`):
 
+- TP/SL — только из `config/tp_sl.json` через `ExitPolicy`; отсутствующий
+  `(code, timeframe, ticker)` — `MissingExitPolicyError`, дефолта нет (ADR-019).
+  Явные `tp_percent`+`sl_percent` в конфиге — приоритет (сетка walk-forward);
 - `code`/`name`/`description` — атрибуты класса (`ClassVar`), не свойства;
 - регистрация — `@register_strategy` + пакет внутри `src/strategies`; `__init__.py`
   пакета обязан импортировать `strategy`, иначе декоратор не сработает;
@@ -252,7 +256,7 @@ in-sample положительный, OOS отрицательный: **в live 
 
 ## 9. Состояние проекта
 
-Закрыто: T0 (блокеры запуска), T2-5/T2-6/T2-7/T2-7a/T2-8, T3-3/T3-5/T3-6/T3-9/T3-10,
+Закрыто: T0 (блокеры запуска), T2-5/T2-6/T2-7/T2-7a/T2-8, T3-3/T3-4/T3-5/T3-6/T3-9/T3-10,
 T4-1/T4-2/T4-5, T5-2/T5-6, T6-1…T6-6. Подробности и цифры — `docs/TASKS.md`,
 `docs/CHANGELOG.md`.
 
@@ -260,7 +264,7 @@ T4-1/T4-2/T4-5, T5-2/T5-6, T6-1…T6-6. Подробности и цифры —
 
 | ID | Задача | Зачем |
 |---|---|---|
-| T3-4 | `ExitPolicy` + `PercentExitPolicy`, TP/SL по тикерам → конфиг | убрать литералы из стратегий |
+| T3-4a | Заполнить `config/tp_sl.json` для остальных тикеров/ТФ | сейчас `dual_ma` 21/44 на 4h, 0 на 1h/1d |
 | T3-7 | `Trade` / `LiveTrade` → общий `TradeRecord` | две модели сделки расходятся |
 | T2-4 | Alembic + перенос старых данных | ручные миграции |
 | T2-9 | Sortino/Calmar/VaR/R-multiple | метрики риска |

@@ -49,11 +49,9 @@ class SMACrossoverStrategy(BaseStrategy):
         
         # SMA параметры
         self.sma_period = self.config.get("sma_period", 50)
-        
-        # TP/SL параметры
-        self.tp_percent = self.config.get("tp_percent", 1.5)
-        self.sl_percent = self.config.get("sl_percent", 1.0)
-        
+
+        # TP/SL выставляет BaseStrategy из config/tp_sl.json (T3-4, ADR-019)
+
         if self.debug:
             self.logger.debug(
                 f"SMA Crossover initialized: period={self.sma_period}, "

@@ -35,6 +35,7 @@ from config.commissions import (
     calculate_margin_fee,
     margin_nights,
 )
+from src.backtest.exit_policy import resolve_exit_policy
 from src.market_data.models import Candle
 
 logger = logging.getLogger(__name__)
@@ -239,9 +240,17 @@ class BaseStrategy(ABC):
         # ✅ Режим торговли: allow_short=False → только LONG
         self.allow_short = self.config.get("allow_short", True)
 
-        # TP/SL для live-торговли: подкласс может переопределить своими значениями
-        self.tp_percent = self.config.get("tp_percent", 1.5)
-        self.sl_percent = self.config.get("sl_percent", 1.0)
+        # TP/SL: explicit values in config win (walk-forward grid); otherwise the
+        # policy is read from config/tp_sl.json. A missing key is an error, never
+        # a silent fallback (T3-4, ADR-019).
+        self.exit_policy = resolve_exit_policy(
+            strategy_code=self.code or type(self).__name__,
+            timeframe=timeframe,
+            ticker=self.config.get("ticker"),
+            config=self.config,
+        )
+        self.tp_percent = self.exit_policy.tp_percent
+        self.sl_percent = self.exit_policy.sl_percent
 
         if self.debug:
             self.logger.debug(f"{self.name} initialized for {timeframe}")
@@ -262,6 +271,10 @@ class BaseStrategy(ABC):
             List[Signal]: Список сигналов
         """
         pass
+
+    def exit_policy_description(self) -> dict:
+        """JSON-ready TP/SL description for reports (fingerprint included)."""
+        return self.exit_policy.describe()
 
     def entry_filter(self, candle_index: int, candle: Candle, signal: Signal) -> bool:
         """
@@ -297,7 +310,7 @@ class BaseStrategy(ABC):
             List[Trade]: Список сделок (закрытые + открытая на конец периода)
         """
         # Импорт внутри метода: simulator импортирует модели из этого модуля.
-        from src.backtest.simulator import ExitRules, SizingRules, TradeSimulator
+        from src.backtest.simulator import SizingRules, TradeSimulator
 
         if not self.signals:
             self.logger.warning("No signals to execute.")
@@ -305,7 +318,7 @@ class BaseStrategy(ABC):
             return []
 
         simulator = TradeSimulator(
-            exit_rules=ExitRules(tp_percent=self.tp_percent, sl_percent=self.sl_percent),
+            exit_policy=self.exit_policy,
             sizing=SizingRules(
                 initial_balance=self.initial_balance,
                 position_size_percent=self.position_size_percent,

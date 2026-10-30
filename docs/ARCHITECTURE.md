@@ -75,7 +75,8 @@ p_selima_v8.1/
 │   ├── trading_config.py              [C] лимиты: max_positions_per_account=6, min_position_size
 │   ├── trading_mode.py                [C] TRADING_MODE=dry_run|live (+LIVE_CONFIRM), по умолчанию dry_run
 │   ├── commissions.py                 [C] комиссии: 0.05% за операцию, маржинальные брекеты
-│   └── costs.json                     [C] издержки бэктеста по инструментам: спред/проскальзывание (ADR-016)
+│   ├── costs.json                     [C] издержки бэктеста по инструментам: спред/проскальзывание (ADR-016)
+│   └── tp_sl.json                     [C] TP/SL по стратегиям + version/sha256; нет ключа — ошибка (ADR-019)
 │
 ├── src/
 │   ├── __init__.py                    пакет
@@ -138,9 +139,11 @@ p_selima_v8.1/
 │   │
 │   ├── analytics/strategy_analyzer.py [C] метрики, интерпретация, отчёт по результату стратегии
 │   ├── backtest/
-│   │   ├── simulator.py               [C] TradeSimulator, ExitRules, SizingRules — единый цикл TP/SL
+│   │   ├── simulator.py               [C] TradeSimulator, SizingRules — единый цикл TP/SL
 │   │   │                                  (SL-first, гэпы по open, exit_time = конец бара,
 │   │   │                                   уровни от сырого open, ADR-012/ADR-017)
+│   │   ├── exit_policy.py             [C] ExitPolicy (протокол) + PercentExitPolicy, резолв
+│   │   │                                  TP/SL из config/tp_sl.json, MissingExitPolicyError (ADR-019)
 │   │   ├── costs.py                   [C] CostModel: спред (½ на сторону), проскальзывание,
 │   │   │                                  tp_penalty (чувствительность), метки GROSS/NET (ADR-016)
 │   │   ├── walk_forward.py            [C] окна train/test, отбор параметров на train, OOS-прогон (ADR-015)
@@ -158,6 +161,7 @@ p_selima_v8.1/
 │   ├── test_trade_simulator.py        TradeSimulator: вход/TP/SL/гэпы/размер позиции/entry_filter
 │   ├── test_walk_forward.py           walk-forward: окна, изоляция параметров, warmup, пропуск окон
 │   ├── test_costs.py                  издержки: спред/проскальзывание, TP-лимитка, конфиг, GROSS/NET
+│   ├── test_exit_policy.py            TP/SL: резолв из tp_sl.json, ошибки без дефолтов, хеш конфига
 │   └── test_allow_short_parity.py     backtest и live одинаково соблюдают allow_short
 │
 ├── dashboard/                         [C] актуальный дашборд
@@ -174,7 +178,8 @@ p_selima_v8.1/
 │                                          таблица FIGI, проверка constraint,
 │                                          pnl_baseline.py (baseline PnL до/после правок движка),
 │                                          walk_forward.py (OOS-оценка TP/SL),
-│                                          cost_audit.py (разложение Δ PnL по слоям, bootstrap-CI)
+│                                          cost_audit.py (разложение Δ PnL по слоям, bootstrap-CI),
+│                                          trade_set_snapshot.py (набор сделок: индексы входа/выхода, PnL)
 ├── optimization/                      [T] grid_tp_sl_dual_ma.py, optimize_macd_plus.py,
 │                                          _check_db.py, tz_ml_optimization.md (ТЗ на ML)
 ├── debug/                             [T] debug_margin.py, debug_instrument.py
@@ -248,8 +253,9 @@ PostgreSQL (`PgLiveTradeRepository` / `PgStopOrderRepository`). SQLite-репо�
 
 | Компонент | Зависит от | Используется в |
 |---|---|---|
-| `BaseStrategy` | `Candle`, `config.commissions` | все стратегии, `StrategyFactory` |
-| `TradeSimulator` | `Candle`, `Signal`, `Trade`, `CostModel` | `BaseStrategy.execute_trades()` |
+| `BaseStrategy` | `Candle`, `config.commissions`, `exit_policy` | все стратегии, `StrategyFactory` |
+| `TradeSimulator` | `Candle`, `Signal`, `Trade`, `CostModel`, `ExitPolicy` | `BaseStrategy.execute_trades()` |
+| `ExitPolicy` (`exit_policy.py`) | `config/tp_sl.json` | `TradeSimulator`, `BaseStrategy` |
 | `CostModel` (`costs.py`) | `config/commissions.py`, `config/costs.json` | `TradeSimulator`, `scripts/*` |
 | `StrategyFactory` | `strategy_registry` | scheduler, dashboard |
 | `HistoryManager` | `AbstractBroker`, SQLAlchemy | `DataUpdater`, dashboard, скрипты |
@@ -299,10 +305,10 @@ sequenceDiagram
   (вход по `open` следующей свечи, TP/SL по `high`/`low`) → `calculate_stats()`.
 - **Live**: `check_last_signal()` → `execute_live_trades(orchestrator, ...)` → API.
 
-Правила выхода задаются один раз: `ExitRules` в `TradeSimulator`, TP/SL — из конфига
-стратегии. Критерии входа — `detect_signals()` плюс `entry_filter()` (хук на свече
-исполнения). `allow_short` соблюдается всеми тремя путями: симуляцией,
-`check_last_signal()` и `execute_live_trades()`.
+Правила выхода задаются один раз: `ExitPolicy` (сейчас `PercentExitPolicy` из
+`config/tp_sl.json`) в `TradeSimulator`, TP/SL — из конфига стратегии. Критерии входа —
+`detect_signals()` плюс `entry_filter()` (хук на свече исполнения). `allow_short`
+соблюдается всеми тремя путями: симуляцией, `check_last_signal()` и `execute_live_trades()`.
 
 Модель исполнения (ADR-012) — пессимистичная там, где OHLC не даёт ответа:
 
@@ -499,6 +505,13 @@ PostgreSQL). Оставлен для legacy-скриптов и локальны
     `entry_filter()`, который вызывается на свече исполнения — той же, что видит
     бэктест. Остаточное расхождение: live не знает `open` следующей свечи на момент
     сигнала, поэтому `check_last_signal()` фильтр не применяет (T3-4, `EntryPolicy`).
+10d. ~~TP/SL жили в `DEFAULT_CONFIG` стратегий, а `BaseStrategy` подставлял `1.5 / 1.0`
+    при отсутствии ключа. `scheduler.py` создавал стратегию без тикера, поэтому live
+    торговал фолбэком для всех инструментов, а не значениями из конфига; сравнить два
+    прогона по уровням было нельзя.~~ **Исправлено (T3-4, ADR-019):** `ExitPolicy` +
+    `config/tp_sl.json` с `version`/`sha256`, `MissingExitPolicyError` вместо дефолта,
+    `tp_sl_version` в отчётах. Покрытие: `dual_ma` 21/44 инструмента на 4h, 0 на 1h/1d
+    (остальные пропускаются с `ERROR`); заполнение — T3-4a.
 10b. ~~`TradeSimulator._try_entry` строил TP/SL от `entry_price` с издержками, поэтому
     включение спреда/проскальзывания меняло уровни, набор сделок (52 → 53) и «−39%» PnL.
     Метка GROSS при этом не была gross: комиссия и маржа вычитались всегда.~~

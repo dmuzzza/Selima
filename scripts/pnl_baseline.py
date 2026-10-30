@@ -43,6 +43,7 @@ from src.backtest.costs import (  # noqa: E402
     TickCosts,
     load_costs,
 )
+from src.backtest.exit_policy import MissingExitPolicyError  # noqa: E402
 from src.market_data.history_manager import HistoryManager  # noqa: E402
 from src.market_data.timeframe import Timeframe  # noqa: E402
 from src.strategies.base_strategy import Trade  # noqa: E402
@@ -104,16 +105,22 @@ def run_single(
         entry.update({"status": "no_data", "trades": 0, "closed": 0, "total_pnl": 0.0})
         return entry
 
-    strategy = StrategyFactory.create(
-        strategy_code,
-        timeframe,
-        config={
-            "ticker": ticker,
-            "costs": costs,
-            "levels_from_fill": levels_from_fill,
-        },
-    )
-    result = strategy.run(candles)
+    try:
+        strategy = StrategyFactory.create(
+            strategy_code,
+            timeframe,
+            config={
+                "ticker": ticker,
+                "costs": costs,
+                "levels_from_fill": levels_from_fill,
+            },
+        )
+        result = strategy.run(candles)
+    except MissingExitPolicyError as exc:
+        # No silent fallback (T3-4): the run is skipped and the reason is recorded.
+        logger.warning("Skip %s %s: %s", ticker, timeframe, exc)
+        entry.update({"status": "no_exit_policy", "reason": str(exc)})
+        return entry
     trades: list[Trade] = result["trades"]
     stats = result["stats"]
     closed = [t for t in trades if not t.is_open()]
@@ -125,6 +132,7 @@ def run_single(
         {
             "status": "ok",
             "costs": costs.describe(),
+            "exit_policy": strategy.exit_policy_description(),
             "levels_from_fill": levels_from_fill,
             # Replay inputs for cost_audit: position size is not in a fingerprint,
             # so the audit must know the sizing rules of this exact run.

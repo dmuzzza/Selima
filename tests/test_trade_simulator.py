@@ -5,7 +5,8 @@ from datetime import datetime, timedelta
 import pytest
 
 from src.backtest.costs import BpsCosts
-from src.backtest.simulator import ExitRules, SizingRules, TradeSimulator
+from src.backtest.exit_policy import PercentExitPolicy
+from src.backtest.simulator import SizingRules, TradeSimulator
 from src.market_data.models import Candle
 from src.strategies.base_strategy import Signal
 
@@ -51,7 +52,7 @@ def run(
     costs=None,
 ):
     simulator = TradeSimulator(
-        exit_rules=ExitRules(tp_percent=tp, sl_percent=sl),
+        exit_policy=PercentExitPolicy(tp_percent=tp, sl_percent=sl),
         sizing=SizingRules(initial_balance=1000.0, position_size_percent=percent),
         on_close=simple_pnl,
         entry_filter=entry_filter,
@@ -328,7 +329,7 @@ def test_exit_time_is_bar_close_when_bar_duration_is_given():
         (100.5, 112.0, 100.0, 111.0),
     ])
     simulator = TradeSimulator(
-        exit_rules=ExitRules(tp_percent=10.0, sl_percent=5.0),
+        exit_policy=PercentExitPolicy(tp_percent=10.0, sl_percent=5.0),
         sizing=SizingRules(initial_balance=1000.0, position_size_percent=100.0),
         on_close=simple_pnl,
         bar_duration=timedelta(hours=1),
@@ -338,11 +339,11 @@ def test_exit_time_is_bar_close_when_bar_duration_is_given():
     assert trades[0].exit_time == candles[2].open_time + timedelta(hours=1)
 
 
-def test_exit_rules_levels():
-    rules = ExitRules(tp_percent=2.0, sl_percent=1.0)
+def test_exit_policy_levels():
+    policy = PercentExitPolicy(tp_percent=2.0, sl_percent=1.0)
 
-    assert rules.levels(100.0, is_long=True) == (pytest.approx(102.0), pytest.approx(99.0))
-    assert rules.levels(100.0, is_long=False) == (pytest.approx(98.0), pytest.approx(101.0))
+    assert policy.levels(100.0, is_long=True) == (pytest.approx(102.0), pytest.approx(99.0))
+    assert policy.levels(100.0, is_long=False) == (pytest.approx(98.0), pytest.approx(101.0))
 
 
 # ── transaction costs (ADR-016) ────────────────────────────────────────────
@@ -396,7 +397,7 @@ def test_levels_from_fill_reproduces_the_live_convention():
     ])
     costs = BpsCosts(spread_bps=2.0, slippage_bps=3.0)
     simulator = TradeSimulator(
-        exit_rules=ExitRules(tp_percent=10.0, sl_percent=5.0),
+        exit_policy=PercentExitPolicy(tp_percent=10.0, sl_percent=5.0),
         sizing=SizingRules(initial_balance=1000.0, position_size_percent=100.0),
         on_close=simple_pnl,
         costs=costs,
