@@ -199,6 +199,16 @@ p_selima_v8.1/
 ├── archive/                           [L] старый дашборд, web_dashboard, marketdata.db
 ├── data/live_trades.db                SQLite со сделками (в .gitignore)
 ├── logs/                              логи (в .gitignore)
+├── sdk_t_bank_docs/                   [D] локальная копия документации T-Invest API —
+│   │                                      источник истины по методам, полям и ошибкам
+│   ├── services/                      обзор сервисов (index.mdx) и папки по сервисам
+│   │   ├── accounts/                  счета, маржинальные показатели, пользователи, переводы
+│   │   ├── instruments/               инструменты, расписание торгов, купоны, ФГО
+│   │   ├── operations/                операции, портфель, позиции, стрим операций
+│   │   ├── orders/                    заявки, асинхронные заявки, стрим состояний
+│   │   ├── quotes/                    котировки, свечи, стаканы, история, техиндикаторы
+│   │   └── stop-orders/               стоп-заявки
+│   └── errors/api_errors.json         коды и описания ошибок API
 └── docs/                              [D] эта документация
 ```
 
@@ -647,3 +657,7 @@ flowchart LR
 3. `src/trading/orchestrator.py` — путь реального ордера.
 4. `scheduler.py` — расписание и сборка компонентов.
 5. `docs/STRATEGY_CONTRACT.md` — как писать новую стратегию.
+6. `sdk_t_bank_docs/services/` — что именно принимает и возвращает T-Invest API: перед
+   любым кодом с API ищем метод и его поля через `codebase_tool`/`grep_search` по этой
+   папке (`methods.mdx` — методы и поля, `head-*` — обзор, `faq_*` — ограничения,
+   `errors/api_errors.json` — коды ошибок). Поля «по памяти» не придумываются.

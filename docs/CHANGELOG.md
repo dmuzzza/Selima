@@ -7,6 +7,13 @@
 
 ### Added
 
+- **Локальная документация T-Invest API как источник истины (T6-10, ADR-024):**
+  `sdk_t_bank_docs/` (`services/{accounts,instruments,operations,orders,quotes,stop-orders}/`,
+  `errors/api_errors.json`) зафиксирована в правилах проекта: перед кодом с API метод и
+  его поля ищутся через `codebase_tool`/`grep_search` по этой папке. Обновлены
+  `AGENTS.md` (§0 маршрут чтения и правила, §5 карта кода, §11 антипаттерны),
+  `docs/ARCHITECTURE.md` (§3 дерево, §11 порядок чтения) и `README.md`
+  (раздел «Документация T-Invest API»). Код не менялся.
 - **Единый отчёт-вердикт (T2-21, ADR-023):** `src/backtest/verdict.py` — модель
   входов и упорядоченные гейты (`rejected` → `inconclusive` → `fragile` → `works`),
   `scripts/verdict.py` — сборка входов (пул, holdout, ×2 издержек, `tp_penalty`,

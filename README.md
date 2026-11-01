@@ -80,6 +80,26 @@ Wheel `t_tech_investments-1.51.0-py3-none-any.whl` лежит в `vendor/` (316 
 uv export --format requirements-txt --no-hashes --all-extras -o requirements.txt
 ```
 
+### Документация T-Invest API
+
+Локальная копия официальной документации — `sdk_t_bank_docs/`. Это источник истины по
+методам, полям и ошибкам API: перед написанием кода метод и его поля ищутся здесь
+(`codebase_tool`/`grep_search`), а не по памяти.
+
+| Путь | Содержание |
+|---|---|
+| `sdk_t_bank_docs/services/accounts/` | счета, маржинальные показатели, пользователи, переводы |
+| `sdk_t_bank_docs/services/instruments/` | инструменты, расписание торгов, купоны, ФГО |
+| `sdk_t_bank_docs/services/operations/` | операции, портфель, позиции, стрим операций |
+| `sdk_t_bank_docs/services/orders/` | заявки, асинхронные заявки, стрим состояний |
+| `sdk_t_bank_docs/services/quotes/` | котировки, свечи, стаканы, история, техиндикаторы |
+| `sdk_t_bank_docs/services/stop-orders/` | стоп-заявки |
+| `sdk_t_bank_docs/errors/api_errors.json` | коды и описания ошибок API |
+
+В каждой папке сервиса: `head-*.md(x)` — обзор, `methods.mdx` — методы и поля
+запросов/ответов, `faq_*.md(x)` — ограничения и частые ошибки. Если нужного метода
+в документации нет — это фиксируется явно, а не додумывается.
+
 ## Структура (кратко)
 
 ```
@@ -95,6 +115,7 @@ p_selima_v8.1/
 ├── scripts/                 # одноразовые утилиты и экспорт
 ├── optimization/            # подбор параметров, ТЗ на ML-оптимизацию
 ├── archive/, debug/         # архив и отладочные скрипты
+├── sdk_t_bank_docs/         # локальная документация T-Invest API (методы, поля, ошибки)
 └── docs/                    # документация
 ```
 
