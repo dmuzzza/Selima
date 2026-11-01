@@ -151,6 +151,7 @@ p_selima_v8.1/
 │   │   ├── null_test.py               [C] контроль движка: случайные входы должны терять издержки (ADR-020)
 │   │   ├── heatmap.py                 [C] сетка TP/SL: плато или одна точка, пороги из validation.json (ADR-021)
 │   │   ├── portfolio.py               [C] мультиинструмент: одно правило, независимые счета, блочный bootstrap (ADR-022)
+│   │   ├── verdict.py                 [C] единый вердикт: входы, упорядоченные гейты, Markdown (ADR-023)
 │   │   └── backtester.py              [L] отдельный движок бэктеста (не используется стратегиями)
 │   ├── storage/models.py              [L] устаревшая ORM-модель "marketdata"
 │   └── utils/
@@ -169,6 +170,7 @@ p_selima_v8.1/
 │   ├── test_null_test.py              null-тест: случайные входы, контроль без издержек, вердикты
 │   ├── test_heatmap.py                heatmap: скоринг в bps, все ветки плато, train-изоляция, отчёты
 │   ├── test_portfolio.py              мультиинструмент: фингерпринты, пул, блоки, гэпы, вердикты
+│   ├── test_verdict.py                вердикт: каждый гейт, порядок групп, флаги, отсутствие входов
 │   └── test_allow_short_parity.py     backtest и live одинаково соблюдают allow_short
 │
 ├── dashboard/                         [C] актуальный дашборд
@@ -189,7 +191,8 @@ p_selima_v8.1/
 │                                          trade_set_snapshot.py (набор сделок: индексы входа/выхода, PnL),
 │                                          null_test.py (случайные входы против издержек, ADR-020),
 │                                          heatmap.py (сетка TP/SL: плато, Markdown + CSV, ADR-021),
-│                                          portfolio_run.py (мультиинструмент: пул, блочный bootstrap, ADR-022)
+│                                          portfolio_run.py (мультиинструмент: пул, блочный bootstrap, ADR-022),
+│                                          verdict.py (единый вердикт: сборка входов, Markdown + JSON, ADR-023)
 ├── optimization/                      [T] grid_tp_sl_dual_ma.py, optimize_macd_plus.py,
 │                                          _check_db.py, tz_ml_optimization.md (ТЗ на ML)
 ├── debug/                             [T] debug_margin.py, debug_instrument.py
@@ -268,6 +271,7 @@ PostgreSQL (`PgLiveTradeRepository` / `PgStopOrderRepository`). SQLite-репо�
 | `ExitPolicy` (`exit_policy.py`) | `config/tp_sl.json` | `TradeSimulator`, `BaseStrategy` |
 | `WalkForward` / `Heatmap` (`walk_forward.py`, `heatmap.py`) | runner стратегии, `config/validation.json` | `scripts/walk_forward.py`, `scripts/heatmap.py` |
 | `Portfolio` (`portfolio.py`) | runner стратегии, `config/portfolio.json`, `config/costs.json` | `scripts/portfolio_run.py` |
+| `Verdict` (`verdict.py`) | `IntervalResult`-входы от `portfolio.py`, `heatmap.py`, `null_test.py`, `config/validation.json` (секция `verdict`) | `scripts/verdict.py` |
 | `CostModel` (`costs.py`) | `config/commissions.py`, `config/costs.json` | `TradeSimulator`, `scripts/*` |
 | `StrategyFactory` | `strategy_registry` | scheduler, dashboard |
 | `HistoryManager` | `AbstractBroker`, SQLAlchemy | `DataUpdater`, dashboard, скрипты |

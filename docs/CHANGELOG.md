@@ -7,6 +7,28 @@
 
 ### Added
 
+- **Единый отчёт-вердикт (T2-21, ADR-023):** `src/backtest/verdict.py` — модель
+  входов и упорядоченные гейты (`rejected` → `inconclusive` → `fragile` → `works`),
+  `scripts/verdict.py` — сборка входов (пул, holdout, ×2 издержек, `tp_penalty`,
+  leave-one-out, heatmap на пуле вокруг торгуемой точки, null-тест), Markdown + JSON.
+  Секция `verdict` в `config/validation.json` версии 3 (holdout `2025-10-01…2026-10-01`,
+  `min_oos_trades` 100, `cost_multiplier` 2.0, `tp_penalty_bps` 4.0,
+  `oos_ratio_min_percent` 50, `n_trials`). Результат: пул 929 сделок +2.71 bps
+  CI95 [−15.53; +22.42], holdout 228 сделок −15.83 bps CI95 [−57.26; +32.35],
+  плато вокруг 2.5 / 2.0 — `no_plateau` (5/8 соседей), null-тест `ok` →
+  **вердикт `inconclusive`** (B3, B4). Повторный прогон совпадает побайтно по всем
+  полям снапшота.
+- `analyze_plateau_around()` в `src/backtest/heatmap.py`: плато вокруг выбранной
+  ячейки, а не вокруг лучшей — гейт C2 мерит то, чем торгуют.
+- `scripts/heatmap.py` пишет JSON-снапшот (ячейки + вердикты обоих блоков) —
+  машинный вход отчёта-вердикта.
+- `tests/test_verdict.py`: 41 тест — каждый гейт отдельно, порядок групп
+  (`rejected` бьёт `inconclusive`, `inconclusive` бьёт `fragile`), все причины
+  группы печатаются, отсутствующие входы дают гейт, а не ноль, флаги не меняют
+  статус, Markdown и JSON.
+- `tests/test_heatmap.py`: 5 тестов плато вокруг выбранной ячейки (anchor_missing,
+  anchor_thin, отрицательная точка, обрыв у выбранной точки при стабильной лучшей).
+- `CLEAN_SET` расширен: `src/backtest/verdict.py`.
 - **Leave-one-out в мультиинструментальном отчёте (T2-20a, ADR-022):**
   `leave_one_out_variants()` пересчитывает пул без лучшего тикера (по максимальному
   net ₽, автоматически), без SBER (если он в наборе и не лучший) и без двух лучших
@@ -104,6 +126,9 @@
   наследования default 4/5 bps. Значения оценочные (шаг цены + премия за
   ликвидность), не из стакана. **Отчёты с `costs_version` v2 несопоставимы с v3:**
   издержки тех же тикеров изменились (ADR-022).
+- `config/validation.json` версия 2 → 3: секция `verdict` (пороги гейтов, границы
+  holdout, `n_trials`). Фингерпринт в отчётах теперь `3+…`; пороги heatmap и
+  `multi_instrument` не менялись.
 - `config/validation.json` версия 1 → 2: добавлены секция `multi_instrument` и
   `gap_threshold_percent`. Пороги heatmap не менялись; фингерпринт изменился,
   поэтому `validation_version` в отчётах теперь `2+…`.

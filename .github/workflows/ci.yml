@@ -20,6 +20,7 @@ env:
     src/backtest/null_test.py
     src/backtest/portfolio.py
     src/backtest/simulator.py
+    src/backtest/verdict.py
     src/backtest/walk_forward.py
     src/strategies/_null_entry
     src/strategies/_template

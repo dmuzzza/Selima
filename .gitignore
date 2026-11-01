@@ -33,6 +33,9 @@ debug/walk_forward*.json
 debug/trade_set_*.json
 debug/null_test_*.json
 debug/heatmap_*.md
+debug/heatmap_*.json
+debug/verdict_*.md
+debug/verdict_*.json
 debug/portfolio_*.json
 debug/portfolio_*.md
 *.db

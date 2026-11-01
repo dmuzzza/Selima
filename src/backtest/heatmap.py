@@ -283,6 +283,91 @@ def analyze_plateau(
     )
 
 
+def analyze_plateau_around(
+    cells: Sequence[CellStats],
+    anchor_tp: float,
+    anchor_sl: float,
+    tp_values: Sequence[float],
+    sl_values: Sequence[float],
+    thresholds: HeatmapThresholds,
+) -> PlateauVerdict:
+    """Check the plateau around a **chosen** cell instead of the best one.
+
+    The verdict report must measure the parameters that are actually traded. A
+    plateau around a different (better) cell says nothing about them: the point
+    being used could sit on a cliff while the best cell is stable. This is the
+    gate the T2-21 report reads (`C2`), so it deliberately ignores whether a
+    better cell exists.
+    """
+    by_key = {(cell.tp, cell.sl): cell for cell in cells}
+    anchor = by_key.get((anchor_tp, anchor_sl))
+    if anchor is None:
+        return PlateauVerdict(
+            status="anchor_missing",
+            best=None,
+            reason=f"grid has no cell for TP {anchor_tp:g} / SL {anchor_sl:g}",
+        )
+    if not anchor.is_eligible(thresholds.min_trades_per_cell):
+        return PlateauVerdict(
+            status="anchor_thin",
+            best=anchor,
+            best_on_edge=_is_edge(anchor, tp_values, sl_values),
+            reason=(
+                f"the chosen cell has {anchor.trades} trades, "
+                f"need {thresholds.min_trades_per_cell}"
+            ),
+        )
+    if anchor.expectancy_bps <= 0.0:
+        return PlateauVerdict(
+            status="no_positive_cell",
+            best=anchor,
+            best_on_edge=_is_edge(anchor, tp_values, sl_values),
+            reason="the chosen cell is not positive; a margin around it means nothing",
+        )
+
+    neighbour_cells = [
+        by_key[key] for key in _neighbour_keys(anchor, tp_values, sl_values) if key in by_key
+    ]
+    evaluated = [
+        cell for cell in neighbour_cells if cell.is_eligible(thresholds.min_trades_per_cell)
+    ]
+    if len(evaluated) < thresholds.min_neighbours_evaluated:
+        return PlateauVerdict(
+            status="insufficient_neighbours",
+            best=anchor,
+            neighbours=tuple(neighbour_cells),
+            evaluated_neighbours=len(evaluated),
+            best_on_edge=_is_edge(anchor, tp_values, sl_values),
+            reason=(
+                f"only {len(evaluated)} neighbours reached "
+                f"{thresholds.min_trades_per_cell} trades "
+                f"(need {thresholds.min_neighbours_evaluated})"
+            ),
+        )
+
+    threshold_bps = anchor.expectancy_bps * (1.0 - thresholds.plateau_margin_percent / 100.0)
+    passing = [
+        cell
+        for cell in evaluated
+        if cell.expectancy_bps > 0.0 and cell.expectancy_bps >= threshold_bps
+    ]
+    share = len(passing) / len(evaluated)
+    return PlateauVerdict(
+        status="plateau" if share >= thresholds.plateau_share else "no_plateau",
+        best=anchor,
+        neighbours=tuple(neighbour_cells),
+        evaluated_neighbours=len(evaluated),
+        passing_neighbours=len(passing),
+        share=share,
+        threshold_bps=threshold_bps,
+        best_on_edge=_is_edge(anchor, tp_values, sl_values),
+        reason=(
+            f"{len(passing)}/{len(evaluated)} neighbours >= {threshold_bps:.2f} bps "
+            f"(share {share:.0%}, need {thresholds.plateau_share:.0%})"
+        ),
+    )
+
+
 def _is_edge(
     cell: CellStats, tp_values: Sequence[float], sl_values: Sequence[float]
 ) -> bool:

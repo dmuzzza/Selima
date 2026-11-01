@@ -91,6 +91,18 @@ def parse_float_list(value: str) -> list[float]:
         raise argparse.ArgumentTypeError(f"invalid number list: {value}") from exc
 
 
+def _cell_payload(cell) -> dict:
+    """One grid cell for the JSON snapshot."""
+    return {
+        "tp_percent": cell.tp,
+        "sl_percent": cell.sl,
+        "trades": cell.trades,
+        "pnl_net_rub": round(cell.pnl_net, 2),
+        "expectancy_bps": round(cell.expectancy_bps, 4),
+        "win_rate_percent": round(cell.win_rate, 2),
+    }
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="TP/SL heatmap: plateau or single point")
     parser.add_argument(
@@ -305,6 +317,33 @@ def main(argv: list[str] | None = None) -> int:
         thresholds=thresholds,
         verdict=full_verdict,
     )
+    snapshot = {
+        "strategy": args.strategy,
+        "ticker": instrument["ticker"],
+        "timeframe": args.timeframe,
+        "grid": grid,
+        "grid_sha256": grid_sha,
+        "tp_sl_source": "grid (ADR-019)",
+        "thresholds": thresholds.describe(),
+        "costs": costs.describe(),
+        "commissions": describe_commissions(),
+        "train": {
+            **train_meta,
+            "verdict": train_verdict.describe(),
+            "cells": [_cell_payload(cell) for cell in train_cells],
+        },
+        "full_history": {
+            **full_meta,
+            "verdict": full_verdict.describe(),
+            "cells": [_cell_payload(cell) for cell in full_cells],
+        },
+    }
+    # JSON is the machine-readable input of the T2-21 verdict report (ADR-023):
+    # Markdown is for people, this file is for the gate that reads the plateau.
+    json_path = out_dir / f"heatmap_{args.tag}.json"
+    json_path.write_text(
+        json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     print(f"strategy={args.strategy} {instrument['ticker']} {args.timeframe}")
     print(f"thresholds={thresholds.fingerprint} min_trades={thresholds.min_trades_per_cell}")
@@ -313,6 +352,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"report: {md_path}")
     print(f"csv: {train_csv}")
     print(f"csv: {full_csv}")
+    print(f"snapshot: {json_path}")
     if not costs.is_tradable:
         print("WARNING: GROSS run, not tradable (ADR-016).")
     return 0

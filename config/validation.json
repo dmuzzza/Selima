@@ -1,5 +1,5 @@
 {
-  "version": "2",
+  "version": "3",
   "notes": [
     "Thresholds for validation reports (heatmap, verdict). Every report prints them together with the fingerprint, so a decision can be reproduced.",
     "min_trades_per_cell: cells with fewer closed trades do not take part in the plateau decision and are marked in the table.",
@@ -11,7 +11,13 @@
     "min_ticker_trades: a ticker below this is marked thin, stays in the totals and is excluded from the share of profitable tickers; 30 matches the heatmap cell floor.",
     "block_days: calendar length of one bootstrap block; a block holds the trades of every ticker, so the common market factor is resampled together.",
     "Empty blocks are part of the population: dropping them would bias the sample towards active periods.",
-    "gap_threshold_percent: a trade is marked gap_affected when an overnight gap inside its holding period exceeds this size. Candles are not dividend-adjusted, so an ex-dividend gap looks like a market move; the report prints totals with and without such trades instead of guessing ex-dividend dates."
+    "gap_threshold_percent: a trade is marked gap_affected when an overnight gap inside its holding period exceeds this size. Candles are not dividend-adjusted, so an ex-dividend gap looks like a market move; the report prints totals with and without such trades instead of guessing ex-dividend dates.",
+    "verdict.min_total_trades / min_oos_trades: below either, the verdict is inconclusive. The OOS floor is 100, not 200: gates B4 and C4 still require the interval to be above zero, so a small sample is filtered by interval width rather than by a count.",
+    "verdict.holdout_start / holdout_end: frozen before the run and used as the out-of-sample period. A fixed-parameter walk-forward is not out-of-sample by parameters when the point was chosen on that same history, so the holdout is a separate calendar window.",
+    "verdict.cost_multiplier: the pool is re-run with every cost multiplied by this factor. A positive interval that turns fully negative at 2x costs is fragile, not rejected: the strategy is cost-sensitive, it was not measured negative at base costs.",
+    "verdict.tp_penalty_bps: TP is a limit order and pays no costs in the base model; this adds the penalty as a gate. If the interval at this penalty contains zero, the result is fragile.",
+    "verdict.oos_ratio_min_percent: OOS net bps below this share of the full-pool net bps means the result does not survive on data outside the fit window.",
+    "verdict.n_trials: declared number of parameter and structure variants tried before this report. Informational for now; it is the input a multiple-testing correction will need."
   ],
   "heatmap": {
     "min_trades_per_cell": 30,
@@ -27,5 +33,15 @@
     "alpha": 0.05,
     "seed": 42,
     "gap_threshold_percent": 5.0
+  },
+  "verdict": {
+    "min_total_trades": 200,
+    "min_oos_trades": 100,
+    "holdout_start": "2025-10-01",
+    "holdout_end": "2026-10-01",
+    "cost_multiplier": 2.0,
+    "tp_penalty_bps": 4.0,
+    "oos_ratio_min_percent": 50.0,
+    "n_trials": 0
   }
 }

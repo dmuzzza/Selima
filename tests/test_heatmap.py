@@ -9,6 +9,7 @@ import pytest
 from src.backtest.heatmap import (
     HeatmapThresholds,
     analyze_plateau,
+    analyze_plateau_around,
     build_grid,
     collect_full_history_trades,
     collect_train_trades,
@@ -278,7 +279,6 @@ def test_edge_cell_has_only_existing_neighbours():
     assert len(verdict.neighbours) == 3
     assert verdict.status == "plateau"
 
-
 def test_best_on_edge_is_flagged():
     thresholds = HeatmapThresholds(min_neighbours_evaluated=3)
     cells = [
@@ -296,6 +296,71 @@ def test_center_best_is_not_flagged_as_edge():
     verdict = analyze_plateau(grid_cells(100.0, 90.0), TP, SL, HeatmapThresholds())
 
     assert verdict.best_on_edge is False
+
+
+# ── plateau around a chosen cell ───────────────────────────────────────────
+
+
+def test_anchored_plateau_uses_the_chosen_cell_not_the_best_one():
+    # The best cell is (3.0, 2.0), but the traded point is (2.0, 1.0).
+    cells = [
+        cell(tp, sl, 100.0 if (tp, sl) == (3.0, 2.0) else 90.0)
+        for tp in TP
+        for sl in SL
+    ]
+
+    verdict = analyze_plateau_around(cells, 2.0, 1.0, TP, SL, HeatmapThresholds())
+
+    assert verdict.best is not None
+    assert (verdict.best.tp, verdict.best.sl) == (2.0, 1.0)
+    assert verdict.status == "plateau"
+
+
+def test_anchored_plateau_reports_no_plateau_when_the_chosen_cell_is_a_cliff():
+    # Anchor 90 bps, but its neighbours on one side collapse to 20 bps.
+    cells = []
+    for tp in TP:
+        for sl in SL:
+            if (tp, sl) == (2.0, 1.0):
+                cells.append(cell(tp, sl, 90.0))
+            elif tp == 1.0:
+                cells.append(cell(tp, sl, 20.0))
+            else:
+                cells.append(cell(tp, sl, 90.0))
+
+    verdict = analyze_plateau_around(cells, 2.0, 1.0, TP, SL, HeatmapThresholds())
+
+    assert verdict.status == "no_plateau"
+    assert verdict.passing_neighbours < verdict.evaluated_neighbours
+
+
+def test_anchored_plateau_missing_cell():
+    cells = grid_cells(100.0, 90.0)
+
+    verdict = analyze_plateau_around(cells, 9.0, 9.0, TP, SL, HeatmapThresholds())
+
+    assert verdict.status == "anchor_missing"
+    assert verdict.best is None
+
+
+def test_anchored_plateau_thin_cell():
+    cells = [
+        cell(tp, sl, 100.0 if (tp, sl) == (2.0, 1.0) else 90.0, trades=5 if (tp, sl) == (2.0, 1.0) else 40)
+        for tp in TP
+        for sl in SL
+    ]
+
+    verdict = analyze_plateau_around(cells, 2.0, 1.0, TP, SL, HeatmapThresholds())
+
+    assert verdict.status == "anchor_thin"
+
+
+def test_anchored_plateau_negative_cell():
+    cells = grid_cells(-10.0, -5.0)
+
+    verdict = analyze_plateau_around(cells, 2.0, 1.0, TP, SL, HeatmapThresholds())
+
+    assert verdict.status == "no_positive_cell"
 
 
 # ── train-window collection ────────────────────────────────────────────────
