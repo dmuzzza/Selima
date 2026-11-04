@@ -43,8 +43,8 @@ ImportError; в логах нет токенов и `account_id`.
 `mask_account_id(None) == "<not set>"`. Маскирование применено в `account_selector`,
 `orchestrator`, `position_manager`, `trade_executor`, `account_info`.
 
-Побочно найдено (не исправлено, T1-4): `position_manager.py:271-299` — недостижимый
-код после `return`, в нём `F821: remaining_positions`.
+Побочно найдено (не исправлено, не входило в T1-4): `position_manager.py:271-299` —
+недостижимый код после `return`, в нём `F821: remaining_positions`.
 
 Проверено после T0-3: `import scheduler` проходит (`DRY_RUN = False` — см. T4-5).
 `tests/test_strategy_contract.py` — 6 тестов зелёные: базовые `check_last_signal`/
@@ -70,7 +70,8 @@ ImportError; в логах нет токенов и `account_id`.
 | T1-1 | Провести инвентаризацию дубликатов и решить судьбу каждого: `src/sma_crossover/`, `src/candle_patterns/`, `app_dashboard.py`, `scheduler_notifier.py`, `src/backtest/`, `src/storage/models.py`, `levels_detector*`, `sma_crossover_strategy.py` | S | done (список в ARCHITECTURE §9) |
 | T1-2 | Удалить/переместить дубликаты: оставить `src/strategies/sma_crossover/`, удалить `src/sma_crossover/`; `app_dashboard.py` → `archive/`; `src/backtest/backtester.py` → `archive/` (после T3-3) | M | todo |
 | T1-3 | Разделить корень: production (`scheduler.py`, `scheduler_notifier.py`, `dashboard/`) и `tools/` (все `*.py`-скрипты из корня, `debug/`, `optimization/`, `scripts/`) | M | todo |
-| T1-4 | Исправить дефекты логики: двойной `check_last_signal` (`scheduler.py:463,512`), двойной `allow_short` (`base_strategy.py:208,221`), `total_pnl_percent` (`base_strategy.py:293`), сортировка перед Sharpe/Z-score | M | in-progress (двойной `allow_short` исправлен; остальное — todo) |
+| T1-4 | Исправить дефекты логики: двойной `check_last_signal` (`scheduler.py:463,512`), двойной `allow_short` (`base_strategy.py:208,221`), `total_pnl_percent` (`base_strategy.py:293`), сортировка перед Sharpe/Z-score | M | done (ADR-026). Четыре коммита: `fix(baseline)` — пропуск вместо `KeyError` и покрытие 11/20; `fix(scheduler)` — один `detect_signals` за цикл; `feat(stats)` — `total_pnl_percent_engaged` рядом со старой метрикой; `fix(stats)` — порядок `(exit_time, entry_time)`, окно `min(entry)…max(exit)`, Sharpe `< 10` сделок → `None`. `total_pnl_percent` не изменился (дельта 0.0), Sharpe у 4 прогонов `*_1d` стал `None`, отчёты идентичны, `model_revision` остался 2 |
+| T1-4a | Явная обработка `None` в потребителях `StrategyStats`: `create_metric_card()` падает на `None` (`value >= good_threshold`), `src/analytics/strategy_analyzer.py:90` вернёт `None` вместо числа. Сейчас недостижимо (дашборд читает усреднённые метрики, анализатор не импортируется), но станет ошибкой отображения при прямом использовании. Показывать «n/a» вместо числа | S | todo (ADR-026) |
 | T1-5 | Привести время к единой зоне: всё хранится в UTC (aware), в MSK конвертируется только на выводе. Заменить `datetime.now()` на `datetime.now(timezone.utc)` | M | todo |
 | T1-6 | Убрать расхождение документации и кода: `max_positions_per_account` (6 vs 3), cron P2 (`*/3` vs «15 минут»), часы работы планировщика | S | todo |
 | T1-7 | Ввести `ruff` + `mypy` + `pytest`, прогнать по проекту, зафиксировать baseline (ошибки — в отдельный список) | M | in-progress (`pyproject.toml` настроен; ruff: 65 legacy-замечаний (UP006/UP035/UP045, `I001`, `F841`, `SIM102`), mypy: 56 ошибок в 7 файлах — в основном implicit Optional и `None`-арифметика в стратегиях. CI проверяет «чистый набор» (`CLEAN_SET` в `.github/workflows/ci.yml`): `simulator.py`, `pending_recovery.py`, `tests/`; по мере исправления legacy-файлов пути добавляются в набор) |
@@ -93,7 +94,7 @@ ImportError; в логах нет токенов и `account_id`.
 | T2-7 | **Модель издержек**: проскальзывание, гэпы, спред, реальные тарифы брокера (сейчас только 0.05% + маржа) | P1 | M | done (спред ½ на сторону + проскальзывание, `TickCosts` для фьючерсов, метки GROSS/NET; ADR-016) |
 | T2-7a | **Аудит издержек и исправление уровней**: уровни TP/SL от сырого `open`, три слоя PnL, реальный gross (`COMMISSION_MODE` из env), `exit_reason`, `scripts/cost_audit.py`, `tp_penalty`, bootstrap-CI | P0 (доверие к цифрам) | M | done (ADR-017, ADR-018; SBER 4h: издержки рынка −6.9% от gross, а не −39%; при консервативной марже OOS-CI включает ноль) |
 | T2-8 | **Walk-forward и out-of-sample** вместо подбора TP/SL на всей истории (сейчас `optimization/grid_tp_sl_dual_ma.py` подбирает на тех же данных) | P0 (риск переобучения) | L | done (`src/backtest/walk_forward.py` + `scripts/walk_forward.py`, ADR-015) |
-| T2-9 | **Метрики риска**: Sortino, Calmar, VaR, средняя просадка, распределение R-multiple | P2 | M | todo |
+| T2-9 | **Метрики риска**: Sortino, Calmar, VaR, средняя просадка, распределение R-multiple. **Дополнено (ADR-026):** сюда же Sharpe по ежедневной equity и сравнение с текущим сделочным Sharpe (тот предполагает независимые сделки и приближён) | P2 | M | todo |
 | T2-10 | **Наблюдаемость**: структурные JSON-логи, метрики (открытые позиции, ошибки API, лаг данных), healthcheck-endpoint | P1 | M | todo |
 | T2-11 | **Уведомления**: единый notifier-интерфейс (VK/Telegram), события: сигнал, сделка, ошибка, ежедневный отчёт | P2 | S | todo |
 | T2-12 | **Бэктест на нескольких инструментах одновременно** с общим капиталом и лимитом позиций (сейчас каждый инструмент считается изолированно) | P1 | L | todo |

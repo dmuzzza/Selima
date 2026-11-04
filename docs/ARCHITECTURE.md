@@ -178,6 +178,10 @@ p_selima_v8.1/
 │   ├── test_verdict.py                вердикт: каждый гейт, порядок групп, флаги, отсутствие входов
 │   ├── test_dividends.py              дивиденды: отсечка после `last_buy_date`, сопоставление с падением,
 │   │                                  пометка, покрытие, sha256, ручные записи без reference
+│   ├── test_strategy_stats.py         StrategyStats: две базы доходности, engaged-капитал, деление на ноль
+│   ├── test_sharpe_zscore.py          Sharpe/Z-score: порядок реализации, окно, пороги и причины None
+│   ├── test_scheduler_signal_lookup.py один вызов detect_signals за цикл обработки инструмента
+│   ├── test_pnl_baseline.py           baseline: пропуски по status, суммы и счётчики, compare с n/a
 │   └── test_allow_short_parity.py     backtest и live одинаково соблюдают allow_short
 │
 ├── dashboard/                         [C] актуальный дашборд
@@ -533,14 +537,22 @@ PostgreSQL). Оставлен для legacy-скриптов и локальны
 
 ### Логика
 
-5. `scheduler.py:463` и `:512` — `check_last_signal()` вызывается дважды за итерацию.
+5. ~~`scheduler.py:463` и `:512` — `check_last_signal()` вызывается дважды за итерацию.~~
+   **Исправлено (T1-4):** сигнал разрешается один раз, внутри ветки (`TEST_MODE` или
+   продакшн); тест `tests/test_scheduler_signal_lookup.py` считает вызовы.
 6. ~~`base_strategy.py:208,221` — `self.allow_short` присваивается дважды.~~
    **Исправлено (T3-3):** присваивание одно.
-7. `base_strategy.py:293-294` — `total_pnl_percent` делится на `initial_balance`, хотя
+7. ~~`base_strategy.py:293-294` — `total_pnl_percent` делится на `initial_balance`, хотя
    `total_pnl` считается по фактическим позициям; при `position_size_percent < 100`
-   доходность занижена.
-8. `base_strategy.py:382-383` — Sharpe берёт `closed_trades[0]` без сортировки по времени.
-9. `base_strategy.py:390-406` — Z-score считается по несортированному списку сделок.
+   доходность занижена.~~ **Исправлено (T1-4, ADR-026):** старая метрика оставлена как
+   «доходность на капитал счёта», рядом добавлена `total_pnl_percent_engaged` —
+   доходность на первоначально задействованный капитал. Дашборд не сломан.
+8. ~~`base_strategy.py:382-383` — Sharpe берёт `closed_trades[0]` без сортировки по времени.~~
+   **Исправлено (T1-4, ADR-026):** порядок `(exit_time, entry_time)`, окно от самого
+   раннего входа до самого позднего выхода, порог 10 сделок.
+9. ~~`base_strategy.py:390-406` — Z-score считается по несортированному списку сделок.~~
+   **Исправлено (T1-4, ADR-026):** тот же порядок реализации, порог 30 сделок, причина
+   в `z_score_reason`.
 10. ~~`execute_trades()` в каждой стратегии: `position_size = current_balance`
     (`position_size_percent` игнорируется), одна позиция одновременно, `exit_time`
     равен `candle.open_time` (время выхода некорректно), TP и SL проверяются в одной
