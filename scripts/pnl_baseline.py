@@ -102,7 +102,9 @@ def run_single(
     }
 
     if not candles:
-        entry.update({"status": "no_data", "trades": 0, "closed": 0, "total_pnl": 0.0})
+        # total_pnl stays None: zero would be indistinguishable from a real flat
+        # result and would bias any per-run average. Aggregates filter by status.
+        entry.update({"status": "no_data", "trades": 0, "closed": 0, "total_pnl": None})
         return entry
 
     try:
@@ -119,7 +121,15 @@ def run_single(
     except MissingExitPolicyError as exc:
         # No silent fallback (T3-4): the run is skipped and the reason is recorded.
         logger.warning("Skip %s %s: %s", ticker, timeframe, exc)
-        entry.update({"status": "no_exit_policy", "reason": str(exc)})
+        entry.update(
+            {
+                "status": "no_exit_policy",
+                "reason": str(exc),
+                "trades": 0,
+                "closed": 0,
+                "total_pnl": None,
+            }
+        )
         return entry
     trades: list[Trade] = result["trades"]
     stats = result["stats"]
@@ -206,6 +216,39 @@ def build_costs(
     return None, None, {**ZERO_COSTS.describe(), "source": "none"}
 
 
+def summarize(runs: list[dict]) -> dict:
+    """Aggregate runs, excluding skipped ones by status, never by zero value.
+
+    A skipped run carries `total_pnl = None`: writing 0.0 would look like a real
+    flat result and would drag down any per-run or per-ticker average.
+    """
+    ok_runs = [r for r in runs if r.get("status") == "ok"]
+    skipped_runs = [r for r in runs if r.get("status") != "ok"]
+
+    skipped_by_status: dict[str, int] = {}
+    for run in skipped_runs:
+        status = str(run.get("status", "unknown"))
+        skipped_by_status[status] = skipped_by_status.get(status, 0) + 1
+
+    return {
+        "runs": len(runs),
+        "runs_ok": len(ok_runs),
+        "runs_skipped": len(skipped_runs),
+        "skipped_by_status": skipped_by_status,
+        "skipped": [
+            {
+                "ticker": run.get("ticker"),
+                "timeframe": run.get("timeframe"),
+                "status": run.get("status"),
+                "reason": run.get("reason"),
+            }
+            for run in skipped_runs
+        ],
+        "total_trades": sum(r["trades"] for r in ok_runs),
+        "total_pnl": sum(r["total_pnl"] for r in ok_runs),
+    }
+
+
 def collect(args: argparse.Namespace) -> dict:
     """Run all requested combinations and return the snapshot payload."""
     instruments = load_instruments(INSTRUMENTS_PATH)
@@ -249,19 +292,28 @@ def collect(args: argparse.Namespace) -> dict:
                 )
             )
 
-    total_pnl = sum(r["total_pnl"] for r in runs)
-    total_trades = sum(r["trades"] for r in runs)
+    summary = summarize(runs)
     return {
         "strategy": args.strategy,
         "tag": args.tag,
         "timeframes": timeframes,
         "costs": costs_description,
         "commissions": describe_commissions(),
-        "runs": len(runs),
-        "total_trades": total_trades,
-        "total_pnl": total_pnl,
+        **summary,
         "results": runs,
     }
+
+
+def _pnl_cell(value: float | None) -> str:
+    """Right-aligned PnL cell; skipped runs have no PnL to show."""
+    return f"{'n/a':>12}" if value is None else f"{value:>12.2f}"
+
+
+def _pnl_delta(old: float | None, new: float | None) -> str:
+    """Delta cell; undefined when either side was skipped."""
+    if old is None or new is None:
+        return f"{'n/a':>12}"
+    return f"{new - old:>12.2f}"
 
 
 def compare(before: dict, after: dict) -> int:
@@ -290,18 +342,23 @@ def compare(before: dict, after: dict) -> int:
     for run_key in sorted(set(before_map) & set(after_map)):
         old, new = before_map[run_key], after_map[run_key]
         # Runs without data have no trades_sha256: equal only if both are empty.
-        if old.get("trades_sha256") == new.get("trades_sha256"):
+        # A status change (e.g. ok -> no_exit_policy) is a change even then.
+        if (
+            old.get("status") == new.get("status")
+            and old.get("trades_sha256") == new.get("trades_sha256")
+        ):
             continue
         changed += 1
         print(
             f"{old['ticker']:<12} {old['timeframe']:<3} "
             f"trades {old['trades']:>4} -> {new['trades']:<4} "
-            f"pnl {old['total_pnl']:>12.2f} -> {new['total_pnl']:<12.2f} "
-            f"delta {new['total_pnl'] - old['total_pnl']:>12.2f}"
+            f"pnl {_pnl_cell(old.get('total_pnl'))} -> {_pnl_cell(new.get('total_pnl'))} "
+            f"delta {_pnl_delta(old.get('total_pnl'), new.get('total_pnl'))}"
         )
 
     print(
         f"\nruns={len(before_map)} changed={changed} missing={len(missing)} added={len(added)}\n"
+        f"skipped {before.get('runs_skipped', 0)} -> {after.get('runs_skipped', 0)}\n"
         f"total_pnl {before['total_pnl']:.2f} -> {after['total_pnl']:.2f} "
         f"(delta {after['total_pnl'] - before['total_pnl']:+.2f})"
     )
@@ -387,9 +444,27 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     print(
-        f"snapshot: {out_path}\nruns={payload['runs']} trades={payload['total_trades']} "
-        f"total_pnl={payload['total_pnl']:.2f} costs={costs['label']}"
+        f"snapshot: {out_path}\n"
+        f"runs={payload['runs']} ok={payload['runs_ok']} skipped={payload['runs_skipped']} "
+        f"trades={payload['total_trades']} total_pnl={payload['total_pnl']:.2f} "
+        f"costs={costs['label']}"
     )
+    if payload["runs_skipped"]:
+        by_status = ", ".join(
+            f"{status}={count}" for status, count in sorted(payload["skipped_by_status"].items())
+        )
+        print(
+            f"WARNING: {payload['runs_skipped']} of {payload['runs']} runs skipped ({by_status}). "
+            "Their total_pnl is None and they are excluded from aggregates; "
+            f"the full list is under \"skipped\" in {out_path.name}."
+        )
+        print(
+            "  skipped: "
+            + ", ".join(
+                f"{item['ticker']} {item['timeframe']} ({item['status']})"
+                for item in payload["skipped"]
+            )
+        )
     return 0
 
 
