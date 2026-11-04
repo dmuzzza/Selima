@@ -485,8 +485,9 @@ class TradingScheduler:
             logger.error(f"⛔ TP/SL not configured for {instrument.ticker} {timeframe}: {exc}")
             return {"signals_count": 0, "trades_count": 0}
         
-        signal = strategy.check_last_signal(candles)
-        
+        # Signal is resolved once, inside the branch below: the test mode builds a
+        # synthetic one and the production branch asks the strategy. Calling
+        # check_last_signal() here as well ran detect_signals() twice per tick.
         # ═══════════════════════════════════════════════════════════════
         # 🧪 ТЕСТОВЫЙ РЕЖИМ: Генерация фиктивного сигнала
         # ═══════════════════════════════════════════════════════════════
