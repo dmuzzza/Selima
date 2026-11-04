@@ -40,6 +40,11 @@ from src.market_data.models import Candle
 
 logger = logging.getLogger(__name__)
 
+# Below these counts a ratio is noise rather than a measurement: two or three
+# trades give a "Sharpe" with no meaning, so the field stays None with a reason.
+MIN_TRADES_FOR_SHARPE = 10
+MIN_TRADES_FOR_ZSCORE = 30
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 📊 УНИВЕРСАЛЬНЫЕ DATA STRUCTURES
@@ -185,7 +190,11 @@ class StrategyStats:
     payoff_ratio: float = 0.0
     max_drawdown: float = 0.0
     sharpe_ratio: Optional[float] = None
+    # Why sharpe_ratio is None: not enough trades, zero dispersion, bad window.
+    sharpe_ratio_reason: str | None = None
     z_score: Optional[float] = None
+    # Why z_score is None: not enough trades, single-sign series, degenerate denominator.
+    z_score_reason: str | None = None
 
     # Среднее движение цены после входа (за 25 свечей)
     median_long_up_move: float = 0.0
@@ -578,30 +587,56 @@ class BaseStrategy(ABC):
                     max_drawdown = drawdown_percent
         
 
-        # Sharpe Ratio (annualized)
+        # Sharpe Ratio (annualized, per trade)
         # mean(pnl_percent) / stdev(pnl_percent) * sqrt(trades_in_year)
-        returns = [t.pnl_percent for t in closed_trades if t.pnl_percent is not None]
+        #
+        # Trades are put in PnL-realization order: a result belongs to the moment
+        # it is realized, so exit_time leads and entry_time breaks ties. The runs
+        # test below is order-sensitive, and Sharpe must not depend on how the
+        # trade list happened to be built.
+        ordered_trades = sorted(
+            closed_trades,
+            key=lambda t: (t.exit_time or t.entry_time, t.entry_time),
+        )
+        returns = [t.pnl_percent for t in ordered_trades if t.pnl_percent is not None]
         sharpe_ratio = None
-        if len(returns) >= 2:
+        sharpe_ratio_reason = None
+        if len(returns) < MIN_TRADES_FOR_SHARPE:
+            sharpe_ratio_reason = (
+                f"{len(returns)} closed trades, minimum {MIN_TRADES_FOR_SHARPE}"
+            )
+        else:
             mean_ret = statistics.mean(returns)
             std_ret = statistics.stdev(returns)
-            if std_ret > 0:
-                # Реальный период в годах: от первой сделки до последней
-                first_time = closed_trades[0].entry_time
-                last_time = closed_trades[-1].exit_time or closed_trades[-1].entry_time
+            if std_ret <= 0:
+                sharpe_ratio_reason = "zero dispersion of trade returns"
+            else:
+                # Window: earliest entry to latest exit across all trades. Taking
+                # the exit of the last-opened trade underestimates the window
+                # (that trade can close before others) and inflates the annual
+                # multiplier.
+                first_time = min(t.entry_time for t in ordered_trades)
+                last_time = max(t.exit_time or t.entry_time for t in ordered_trades)
                 years = (last_time - first_time).days / 365.0
-                if years > 0:
+                if years <= 0:
+                    sharpe_ratio_reason = "non-positive time window"
+                else:
                     trades_per_year = len(returns) / years
                     sharpe_ratio = (mean_ret / std_ret) * math.sqrt(trades_per_year)
 
         # Z-Score (серийность сделок / Wald-Wolfowitz runs test)
         # Бинарный список: 1 = win, 0 = loss
-        binary = [1 if t.pnl_percent and t.pnl_percent > 0 else 0 for t in closed_trades]
+        binary = [1 if t.pnl_percent and t.pnl_percent > 0 else 0 for t in ordered_trades]
         N = len(binary)
         W = sum(binary)
         L = N - W
         z_score = None
-        if N >= 30 and W > 0 and L > 0:
+        z_score_reason = None
+        if N < MIN_TRADES_FOR_ZSCORE:
+            z_score_reason = f"{N} closed trades, minimum {MIN_TRADES_FOR_ZSCORE}"
+        elif W == 0 or L == 0:
+            z_score_reason = "all trades have the same sign"
+        else:
             # Считаем число серий R
             R = 1
             for i in range(1, N):
@@ -612,6 +647,8 @@ class BaseStrategy(ABC):
             denominator = (X * (X - 1) / (N - 1)) ** 0.5
             if denominator > 0:
                 z_score = numerator / denominator
+            else:
+                z_score_reason = "degenerate denominator"
 
         # Медианное движение цены после входа (25 свечей)
         long_up_moves = [t.post_entry_up_move for t in closed_trades
@@ -644,7 +681,9 @@ class BaseStrategy(ABC):
             payoff_ratio=payoff_ratio,
             max_drawdown=max_drawdown,
             sharpe_ratio=sharpe_ratio,
+            sharpe_ratio_reason=sharpe_ratio_reason,
             z_score=z_score,
+            z_score_reason=z_score_reason,
             median_long_up_move=median_long_up,
             median_short_down_move=median_short_down,
         )
