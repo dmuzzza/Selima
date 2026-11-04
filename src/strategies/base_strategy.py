@@ -142,8 +142,24 @@ class Trade:
 
 @dataclass
 class StrategyStats:
-    """Универсальная статистика стратегии"""
-    
+    """Универсальная статистика стратегии
+
+    Две доходности считаются от разных баз — это разные числа, а не дубли:
+
+    - `total_pnl_percent` — PnL к **начальному капиталу счёта**
+      (`initial_balance`). Отвечает на вопрос «сколько заработал счёт».
+    - `total_pnl_percent_engaged` — PnL к **первоначально задействованному
+      капиталу** (`initial_balance * position_size_percent / 100`). Отвечает на
+      вопрос «сколько заработал капитал, который реально работал».
+
+    При `position_size_percent = 100` обе совпадают; при меньшем значении
+    вторая больше в `100 / position_size_percent` раз. База второй метрики —
+    первоначальная, без компаундинга: фактический размер позиции растёт вместе
+    с балансом (`SizingRules.position_size`), поэтому при прибыльной серии
+    `total_pnl_percent_engaged` — верхняя оценка доходности задействованного
+    капитала, а не точное значение.
+    """
+
     total_trades: int = 0
     closed_trades: int = 0
     winning_trades: int = 0
@@ -159,6 +175,8 @@ class StrategyStats:
 
     total_pnl: float = 0.0
     total_pnl_percent: float = 0.0
+    # PnL к первоначально задействованному капиталу, не к initial_balance.
+    total_pnl_percent_engaged: float = 0.0
     final_balance: float = 0.0
 
     # Целесообразность стратегии
@@ -181,7 +199,7 @@ class StrategyStats:
             f"  Winning: {self.winning_trades} | Losing: {self.losing_trades}\n"
             f"  Win rate: {self.win_rate:.2f}%\n"
             f"  Avg win: {self.avg_win:.2f}% | Avg loss: {self.avg_loss:.2f}%\n"
-            f"  Total PnL: {self.total_pnl:.2f}₽ ({self.total_pnl_percent:+.2f}%)\n"
+            f"  Total PnL: {self.total_pnl:.2f}₽ ({self.total_pnl_percent:+.2f}% of account / {self.total_pnl_percent_engaged:+.2f}% of engaged capital)\n"
             f"  Final balance: {self.final_balance:.2f}₽"
             f"  Avg hold: {self.avg_hold_days:.1f} days\n"
             f"  Median long up move: {self.median_long_up_move:.2f}%\n"
@@ -476,6 +494,12 @@ class BaseStrategy(ABC):
 
         total_pnl = sum(t.pnl_abs for t in closed_trades if t.pnl_abs)
         total_pnl_percent = (total_pnl / self.initial_balance) * 100
+        # Two different bases, see StrategyStats: account capital vs the capital
+        # that actually worked. At position_size_percent = 100 they are equal.
+        engaged_capital = self.initial_balance * (self.position_size_percent / 100.0)
+        total_pnl_percent_engaged = (
+            (total_pnl / engaged_capital) * 100 if engaged_capital > 0 else 0.0
+        )
 
         win_rate = (
             (len(winning_trades) / len(closed_trades) * 100)
@@ -612,6 +636,7 @@ class BaseStrategy(ABC):
 
             total_pnl=total_pnl,
             total_pnl_percent=total_pnl_percent,
+            total_pnl_percent_engaged=total_pnl_percent_engaged,
             final_balance=final_balance,
             # ✅ Метрики целесообразности
             expectancy=expectancy,

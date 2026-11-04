@@ -132,6 +132,16 @@
 
 ### Changed
 
+- `StrategyStats.total_pnl_percent_engaged`: доходность к **первоначально
+  задействованному** капиталу (`initial_balance × position_size_percent / 100`) рядом
+  со старым `total_pnl_percent` (к начальному капиталу счёта). Две базы — два разных
+  числа; при `position_size_percent = 100` совпадают (T1-4). База второй —
+  первоначальная, без компаундинга, поэтому при прибыльной серии это верхняя оценка.
+  `__repr__` печатает обе, README объясняет разницу. `tests/test_strategy_stats.py` —
+  5 тестов, включая ручной расчёт при 50% и 25% и защиту от деления на ноль.
+  Метрики отчётов не изменились: в `config/portfolio.json` `position_size_percent = 100`,
+  дельта `total_pnl_percent` = 0.0 на всех 10 прогонах; `pnl_baseline` `changed=0`,
+  `portfolio_run`/`verdict` — снапшоты идентичны.
 - `TradeSimulator` принимает `exit_policy` вместо `exit_rules`; `ExitRules` удалён
   (ADR-019).
 - `BaseStrategy` резолвит TP/SL через `resolve_exit_policy()`: явные
