@@ -1,0 +1,98 @@
+{
+  "version": "2",
+  "notes": [
+    "Dividend calendar for backtest trade marking (T2-22, ADR-025). No cash flow and no tax are modelled: a trade is only marked dividend_affected.",
+    "Version 2 fixes the instrument mapping: the first fetch used FIGI values typed from memory and returned another issuer's payments for SNGSP and MTSS. Every event is now fetched by the FIGI from config/instruments.json (SBER BBG004730N88, SNGSP BBG004S681M2, MTSS BBG004S681W1).",
+    "dividend_gross is the amount per share. The T-Invest field `dividend_net` returns the announced (gross) value: SBER 2024 came back as 33.30 for a declared 33.30 RUB dividend. The API name is misleading, so the field is stored as gross.",
+    "last_buy_date is the last day to buy and still be in the registry (T+1). The ex-bar is the first trading bar strictly after it, weekend bars included.",
+    "source: api - fetched by scripts/fetch_dividends.py; manual - typed by hand and then `reference` is mandatory (independent source, no guessing).",
+    "An event whose ex-bar does not drop by at least dividends.gap_match_ratio of the expected dividend gap is reported as no_gap_match and is not applied.",
+    "Absent events are not invented: the report lists tickers and years without events, and gaps above the threshold that the calendar cannot explain."
+  ],
+  "events": [
+    {
+      "ticker": "MTSS",
+      "record_date": "2023-06-29",
+      "last_buy_date": "2023-06-28",
+      "dividend_gross": 34.29,
+      "source": "api"
+    },
+    {
+      "ticker": "MTSS",
+      "record_date": "2024-07-16",
+      "last_buy_date": "2024-07-15",
+      "dividend_gross": 35.0,
+      "source": "api"
+    },
+    {
+      "ticker": "MTSS",
+      "record_date": "2025-07-07",
+      "last_buy_date": "2025-07-04",
+      "dividend_gross": 35.0,
+      "source": "api"
+    },
+    {
+      "ticker": "MTSS",
+      "record_date": "2026-07-09",
+      "last_buy_date": "2026-07-08",
+      "dividend_gross": 35.0,
+      "source": "api"
+    },
+    {
+      "ticker": "SBER",
+      "record_date": "2023-05-11",
+      "last_buy_date": "2023-05-10",
+      "dividend_gross": 25.0,
+      "source": "api"
+    },
+    {
+      "ticker": "SBER",
+      "record_date": "2024-07-11",
+      "last_buy_date": "2024-07-10",
+      "dividend_gross": 33.3,
+      "source": "api"
+    },
+    {
+      "ticker": "SBER",
+      "record_date": "2025-07-18",
+      "last_buy_date": "2025-07-17",
+      "dividend_gross": 34.84,
+      "source": "api"
+    },
+    {
+      "ticker": "SBER",
+      "record_date": "2026-07-20",
+      "last_buy_date": "2026-07-17",
+      "dividend_gross": 37.64,
+      "source": "api"
+    },
+    {
+      "ticker": "SNGSP",
+      "record_date": "2023-07-20",
+      "last_buy_date": "2023-07-19",
+      "dividend_gross": 0.8,
+      "source": "api"
+    },
+    {
+      "ticker": "SNGSP",
+      "record_date": "2024-07-18",
+      "last_buy_date": "2024-07-17",
+      "dividend_gross": 12.29,
+      "source": "api"
+    },
+    {
+      "ticker": "SNGSP",
+      "record_date": "2025-07-17",
+      "last_buy_date": "2025-07-16",
+      "dividend_gross": 8.5,
+      "source": "api"
+    },
+    {
+      "ticker": "SNGSP",
+      "record_date": "2026-07-16",
+      "last_buy_date": "2026-07-15",
+      "dividend_gross": 0.85,
+      "source": "api"
+    }
+  ]
+}

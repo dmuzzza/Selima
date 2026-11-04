@@ -1,6 +1,8 @@
 {
-  "version": "3",
+  "version": "4",
+  "model_revision": "2",
   "notes": [
+    "model_revision: which measurement model produced a report. 1 — no dividend calendar; 2 — trades spanning an ex-dividend bar are marked (T2-22, ADR-025). Re-running an old hypothesis on a corrected model is not a new trial, so n_trials stays, but the revision records that the numbers moved.",
     "Thresholds for validation reports (heatmap, verdict). Every report prints them together with the fingerprint, so a decision can be reproduced.",
     "min_trades_per_cell: cells with fewer closed trades do not take part in the plateau decision and are marked in the table.",
     "plateau_margin_percent: a neighbour passes when its net expectancy is within this share of the best cell.",
@@ -17,7 +19,8 @@
     "verdict.cost_multiplier: the pool is re-run with every cost multiplied by this factor. A positive interval that turns fully negative at 2x costs is fragile, not rejected: the strategy is cost-sensitive, it was not measured negative at base costs.",
     "verdict.tp_penalty_bps: TP is a limit order and pays no costs in the base model; this adds the penalty as a gate. If the interval at this penalty contains zero, the result is fragile.",
     "verdict.oos_ratio_min_percent: OOS net bps below this share of the full-pool net bps means the result does not survive on data outside the fit window.",
-    "verdict.n_trials: declared number of parameter and structure variants tried before this report. Informational for now; it is the input a multiple-testing correction will need."
+    "verdict.n_trials: declared number of parameter and structure variants tried before this report. Informational for now; it is the input a multiple-testing correction will need.",
+    "dividends.gap_match_ratio: an event is applied only when the ex-bar falls by at least this share of the expected dividend gap (dividend_gross / previous close). 0.3 means 'clearly less than half of the expected drop' - chosen as a sanity floor, not tuned to the sample. A price rise never counts as a match. Events below it are reported as no_gap_match and do not mark trades."
   ],
   "heatmap": {
     "min_trades_per_cell": 30,
@@ -43,5 +46,8 @@
     "tp_penalty_bps": 4.0,
     "oos_ratio_min_percent": 50.0,
     "n_trials": 0
+  },
+  "dividends": {
+    "gap_match_ratio": 0.3
   }
 }

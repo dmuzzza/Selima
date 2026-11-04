@@ -188,6 +188,7 @@ class VerdictInputs:
     heatmap_plateau: bool | None = None
     tradable: bool = True
     gap_verdict_changed: bool = False
+    dividend_verdict_changed: bool = False
     best_ticker: str | None = None
     best_contribution_percent: float | None = None
     n_trials: int | None = None
@@ -211,6 +212,7 @@ class VerdictInputs:
             "heatmap_plateau": self.heatmap_plateau,
             "tradable": self.tradable,
             "gap_verdict_changed": self.gap_verdict_changed,
+            "dividend_verdict_changed": self.dividend_verdict_changed,
             "best_ticker": self.best_ticker,
             "best_contribution_percent": (
                 round(self.best_contribution_percent, 2)
@@ -447,6 +449,7 @@ def _flags(inputs: VerdictInputs, thresholds: VerdictThresholds) -> dict:
     """Informational fields: they never change the status by themselves."""
     return {
         "gap_verdict_changed": inputs.gap_verdict_changed,
+        "dividend_verdict_changed": inputs.dividend_verdict_changed,
         "best_ticker": inputs.best_ticker,
         "best_contribution_percent": (
             round(inputs.best_contribution_percent, 2)

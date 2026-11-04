@@ -7,13 +7,25 @@
 
 ### Added
 
-- **Локальная документация T-Invest API как источник истины (T6-10, ADR-024):**
-  `sdk_t_bank_docs/` (`services/{accounts,instruments,operations,orders,quotes,stop-orders}/`,
-  `errors/api_errors.json`) зафиксирована в правилах проекта: перед кодом с API метод и
-  его поля ищутся через `codebase_tool`/`grep_search` по этой папке. Обновлены
-  `AGENTS.md` (§0 маршрут чтения и правила, §5 карта кода, §11 антипаттерны),
-  `docs/ARCHITECTURE.md` (§3 дерево, §11 порядок чтения) и `README.md`
-  (раздел «Документация T-Invest API»). Код не менялся.
+- **Дивидендный календарь (T2-22, ADR-025):** `config/dividends.json` v2 (события
+  `dividend_gross`, `last_buy_date`, `source: api|manual`, `version` + `sha256`) и
+  `src/backtest/dividends.py` — правило отсечки «первый торговый бар строго после
+  `last_buy_date`» (weekend-бары участвуют), сопоставление с фактическим падением
+  (`gap_match_ratio` 0.3 — санитарный пол, не калибровка), пометка
+  `dividend_affected`, покрытие по тикерам и годам. `scripts/fetch_dividends.py` —
+  ручная выгрузка `get_dividends` со сверкой тикера по FIGI (несовпадение —
+  остановка). PnL и набор сделок не меняются: 929 сделок, +2.71 bps, CI
+  [−15.53; +22.42], holdout 228 / −15.83 bps, вердикт `inconclusive` — те же числа,
+  что в ADR-023. `dividend_affected` = 0: стратегия выходит раньше отсечки.
+  `tests/test_dividends.py` — 27 тестов, включая «известное ограничение» MTSS 2025
+  (weekend-бар делит гэп, T2-23).
+- `--no-dividends` в `scripts/portfolio_run.py` и `scripts/verdict.py`: прогон без
+  календаря для чувствительности.
+- `model_revision` в `config/validation.json` (версия 4) и в метаданных отчётов:
+  перезапуск на исправленной модели — не новая гипотеза, `n_trials` не растёт.
+- Секция `## Dividend coverage` в отчёте мультиинструмента: применённые события,
+  список неприменённых (`no_gap_match`) с причиной, тикеры без событий, гэпы >5%,
+  которые календарь не объясняет.
 - **Единый отчёт-вердикт (T2-21, ADR-023):** `src/backtest/verdict.py` — модель
   входов и упорядоченные гейты (`rejected` → `inconclusive` → `fragile` → `works`),
   `scripts/verdict.py` — сборка входов (пул, holdout, ×2 издержек, `tp_penalty`,

@@ -43,6 +43,14 @@ from src.backtest.costs import (  # noqa: E402
     CostModel,
     load_costs,
 )
+from src.backtest.dividends import (  # noqa: E402
+    applied_ex_bars,
+    build_coverage,
+    load_dividend_thresholds,
+    load_dividends,
+    resolve_events,
+    years_from_candles,
+)
 from src.backtest.heatmap import (  # noqa: E402
     CellStats,
     analyze_plateau_around,
@@ -141,6 +149,7 @@ def run_pool(
     thresholds,
     trade_start: datetime | None = None,
     trade_end: datetime | None = None,
+    ex_bars_by_ticker: dict[str, tuple] | None = None,
 ) -> list[PooledTrade]:
     """Run every ticker and pool closed trades, optionally filtered by entry time."""
     runs: dict[str, list[Trade]] = {}
@@ -156,7 +165,10 @@ def run_pool(
         runs[ticker] = trades
         gaps[ticker] = gap_series(candles)
     return pool_trades(
-        runs, gaps, gap_threshold_percent=thresholds.gap_threshold_percent
+        runs,
+        gaps,
+        gap_threshold_percent=thresholds.gap_threshold_percent,
+        ex_bars_by_ticker=ex_bars_by_ticker,
     )
 
 
@@ -278,6 +290,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--warmup-bars", type=int, default=250, help="candles before the holdout start"
     )
     parser.add_argument("--null-seeds", type=int, default=30)
+    parser.add_argument(
+        "--dividends-file",
+        default=str(ROOT / "config" / "dividends.json"),
+        help="dividend calendar used to mark dividend-affected trades (T2-22)",
+    )
+    parser.add_argument(
+        "--no-dividends",
+        action="store_true",
+        help="sensitivity: run without the dividend calendar (marks only, PnL unchanged)",
+    )
     parser.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR))
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args(argv)
@@ -345,6 +367,30 @@ def main(argv: list[str] | None = None) -> int:
         for ticker, candles in raw.items()
     }
 
+    dividend_thresholds = load_dividend_thresholds(args.thresholds_file)
+    resolved = []
+    ex_bars: dict[str, tuple] = {}
+    coverage: dict | None = None
+    calendar = None
+    if args.no_dividends:
+        logger.info("Dividend calendar disabled by --no-dividends")
+    else:
+        calendar = load_dividends(args.dividends_file)
+        resolved = resolve_events(
+            calendar,
+            raw,
+            gap_match_ratio=dividend_thresholds.gap_match_ratio,
+        )
+        ex_bars = applied_ex_bars(resolved)
+        coverage = build_coverage(
+            calendar,
+            resolved,
+            {ticker: gap_series(candles) for ticker, candles in raw.items()},
+            tickers=tickers,
+            years=years_from_candles(raw),
+            gap_threshold_percent=pool_thresholds.gap_threshold_percent,
+        ).describe()
+
     logger.info("Pool: full history")
     pooled_full = run_pool(
         full,
@@ -353,6 +399,7 @@ def main(argv: list[str] | None = None) -> int:
         config=config,
         costs_for=costs_config.for_ticker,
         thresholds=pool_thresholds,
+        ex_bars_by_ticker=ex_bars,
     )
     pool_interval = interval(pooled_full, pool_thresholds)
     pool_summary = summarize(pooled_full, pool_thresholds)
@@ -367,6 +414,7 @@ def main(argv: list[str] | None = None) -> int:
         thresholds=pool_thresholds,
         trade_start=holdout_start,
         trade_end=holdout_end,
+        ex_bars_by_ticker=ex_bars,
     )
     holdout_interval = interval(pooled_holdout, pool_thresholds)
 
@@ -378,6 +426,7 @@ def main(argv: list[str] | None = None) -> int:
         config=config,
         costs_for=doubled_costs(costs_config, verdict_thresholds.cost_multiplier),
         thresholds=pool_thresholds,
+        ex_bars_by_ticker=ex_bars,
     )
     doubled_interval = interval(pooled_doubled, pool_thresholds)
 
@@ -389,6 +438,7 @@ def main(argv: list[str] | None = None) -> int:
         config=config,
         costs_for=tp_penalty_costs(costs_config, verdict_thresholds.tp_penalty_bps),
         thresholds=pool_thresholds,
+        ex_bars_by_ticker=ex_bars,
     )
     penalty_interval = interval(pooled_penalty, pool_thresholds)
 
@@ -413,6 +463,13 @@ def main(argv: list[str] | None = None) -> int:
     clean_interval = interval(clean, pool_thresholds)
     gap_verdict_changed = (clean_interval.positive != pool_interval.positive) or (
         clean_interval.negative != pool_interval.negative
+    )
+
+    without_dividends = [item for item in pooled_full if not item.dividend_affected]
+    dividend_interval = interval(without_dividends, pool_thresholds)
+    dividend_verdict_changed = (
+        dividend_interval.positive != pool_interval.positive
+        or dividend_interval.negative != pool_interval.negative
     )
 
     logger.info("Heatmap around the chosen cell")
@@ -456,6 +513,7 @@ def main(argv: list[str] | None = None) -> int:
             costs_config.for_ticker(ticker).is_tradable for ticker in tickers
         ),
         gap_verdict_changed=gap_verdict_changed,
+        dividend_verdict_changed=dividend_verdict_changed,
         best_ticker=pool_summary.best_ticker,
         best_contribution_percent=pool_summary.best_contribution_percent,
         n_trials=verdict_thresholds.n_trials,
@@ -470,6 +528,32 @@ def main(argv: list[str] | None = None) -> int:
             "sl_percent": config.parameters.sl_percent,
             "costs_version": f"{costs_config.version}+{costs_config.sha256[:12]}",
             "commissions": describe_commissions(),
+            "dividends": (
+                "disabled (--no-dividends)"
+                if calendar is None
+                else (
+                    f"{calendar.version}+{calendar.sha256[:12]}, "
+                    f"gap_match_ratio={dividend_thresholds.gap_match_ratio:g}"
+                )
+            ),
+            "model_revision": dividend_thresholds.model_revision,
+            "dividend_affected": {
+                "trades": pool_summary.dividend_affected_trades,
+                "net_rub": round(pool_summary.dividend_affected_net_rub, 2),
+                "share": (
+                    round(pool_summary.dividend_affected_share, 4)
+                    if pool_summary.dividend_affected_share is not None
+                    else None
+                ),
+            },
+            "without_dividend_affected": {
+                "trades": dividend_interval.trades,
+                "net_bps": round(dividend_interval.net_bps, 2),
+                "ci_low": round(dividend_interval.ci_low, 2),
+                "ci_high": round(dividend_interval.ci_high, 2),
+                "positive": dividend_interval.positive,
+            },
+            "dividend_coverage": coverage,
             "heatmap_version": heatmap_thresholds.fingerprint,
             "null_test_costs": costs_config.for_ticker(None).describe(),
         },

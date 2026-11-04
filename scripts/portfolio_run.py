@@ -37,6 +37,14 @@ from src.backtest.costs import (  # noqa: E402
     CostModel,
     load_costs,
 )
+from src.backtest.dividends import (  # noqa: E402
+    applied_ex_bars,
+    build_coverage,
+    load_dividend_thresholds,
+    load_dividends,
+    resolve_events,
+    years_from_candles,
+)
 from src.backtest.portfolio import (  # noqa: E402
     PortfolioConfig,
     build_report,
@@ -136,6 +144,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="allow a zero-cost run (report is marked GROSS and is not tradable)",
     )
+    parser.add_argument(
+        "--dividends-file",
+        default=str(ROOT / "config" / "dividends.json"),
+        help="dividend calendar used to mark dividend-affected trades (T2-22)",
+    )
+    parser.add_argument(
+        "--no-dividends",
+        action="store_true",
+        help="sensitivity: run without the dividend calendar (marks only, PnL unchanged)",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args(argv)
 
@@ -186,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     timeframe = Timeframe(config.timeframe)
     runs: dict[str, list[Trade]] = {}
     gaps: dict[str, dict] = {}
+    candles_by_ticker: dict[str, list] = {}
     costs_used: dict[str, dict] = {}
     candles_count: dict[str, int] = {}
     skipped: dict[str, str] = {}
@@ -203,27 +222,65 @@ def main(argv: list[str] | None = None) -> int:
         runner = build_runner(config.strategy, config.timeframe, ticker, costs, config)
         runs[ticker] = runner(candles)
         gaps[ticker] = gap_series(candles)
+        candles_by_ticker[ticker] = candles
         costs_used[ticker] = costs.describe()
         candles_count[ticker] = len(candles)
 
     if not runs:
         raise SystemExit("No ticker produced a run; check the database and the cost config")
 
+    dividend_thresholds = load_dividend_thresholds(args.thresholds_file)
+    resolved = []
+    ex_bars: dict[str, tuple] = {}
+    coverage: dict | None = None
+    calendar = None
+    if args.no_dividends:
+        logger.info("Dividend calendar disabled by --no-dividends")
+    else:
+        calendar = load_dividends(args.dividends_file)
+        resolved = resolve_events(
+            calendar,
+            candles_by_ticker,
+            gap_match_ratio=dividend_thresholds.gap_match_ratio,
+        )
+        ex_bars = applied_ex_bars(resolved)
+        coverage = build_coverage(
+            calendar,
+            resolved,
+            gaps,
+            tickers=list(runs),
+            years=years_from_candles(candles_by_ticker),
+            gap_threshold_percent=thresholds.gap_threshold_percent,
+        ).describe()
+
+    dividends_label = (
+        "disabled (--no-dividends)"
+        if calendar is None
+        else (
+            f"{calendar.version}+{calendar.sha256[:12]}, "
+            f"gap_match_ratio={dividend_thresholds.gap_match_ratio:g}"
+        )
+    )
+
     pooled = pool_trades(
         runs,
         gaps,
         gap_threshold_percent=thresholds.gap_threshold_percent,
+        ex_bars_by_ticker=ex_bars,
     )
     report = build_report(
         pooled,
         config=config,
         thresholds=thresholds,
+        dividend_coverage=coverage,
         extra_meta={
             "costs_version": f"{costs_config.version}+{costs_config.sha256[:12]}",
             "costs_source": str(args.costs_file),
             "costs_scope": "per-instrument" if global_costs is None else "global override",
             "costs_label": "NET" if all(c["tradable"] for c in costs_used.values()) else "GROSS",
             "commissions": describe_commissions(),
+            "dividends": dividends_label,
+            "model_revision": dividend_thresholds.model_revision,
             # TP/SL come from the portfolio config, so `config/tp_sl.json` is not
             # used here; the field stays in the report to keep the version block
             # complete next to costs_version (ADR-022).
@@ -235,6 +292,7 @@ def main(argv: list[str] | None = None) -> int:
         snapshot_meta={
             "candles": candles_count,
             "costs_per_ticker": costs_used,
+            "dividend_events": [item.describe() for item in resolved],
         },
     )
 

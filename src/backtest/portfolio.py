@@ -20,10 +20,16 @@ Design decisions (ADR-022):
   every ticker, so the common market factor moves together. Empty blocks stay in
   the population: dropping them would bias the sample towards active periods;
 - **dividends are not adjusted**: candles come from the exchange raw. An
-  ex-dividend gap looks like a market move and hits stops. A trade is marked
-  `gap_affected` when an overnight gap inside its holding period exceeds
-  `gap_threshold_percent`; the report prints totals with and without those
-  trades. A real dividend calendar is a separate task (T2-22).
+  ex-dividend gap looks like a market move and hits stops. Two independent marks
+  are reported:
+
+  * `gap_affected` - an overnight gap inside the holding period exceeds
+    `gap_threshold_percent`, whatever its cause;
+  * `dividend_affected` - the holding period spans an ex-dividend bar from
+    `config/dividends.json` (T2-22, ADR-025).
+
+  Neither mark changes PnL or the set of trades: the report prints totals with
+  and without those trades instead of guessing the dividend cash flow.
 """
 
 from __future__ import annotations
@@ -39,6 +45,8 @@ from pathlib import Path
 
 from src.market_data.models import Candle
 from src.strategies.base_strategy import Trade
+
+from .dividends import mark_dividend_affected
 
 DEFAULT_MIN_TOTAL_TRADES = 200
 DEFAULT_MIN_TICKER_TRADES = 30
@@ -221,6 +229,12 @@ class PooledTrade:
     ticker: str
     trade: Trade
     gap_affected: bool = False
+    dividend_affected: bool = False
+
+    @property
+    def phantom_affected(self) -> bool:
+        """Explained by a gap or by a dividend bar: a phantom move candidate."""
+        return self.gap_affected or self.dividend_affected
 
     @property
     def bps(self) -> float:
@@ -275,23 +289,34 @@ def pool_trades(
     gaps_by_ticker: Mapping[str, Mapping[datetime, float]],
     *,
     gap_threshold_percent: float,
+    ex_bars_by_ticker: Mapping[str, Sequence[datetime]] | None = None,
 ) -> list[PooledTrade]:
-    """Merge per-ticker runs into one list, marking gap-affected trades.
+    """Merge per-ticker runs into one list, marking gap and dividend trades.
 
     Only closed trades enter the pool: an open position has no realized PnL and
-    would dilute the per-trade expectancy.
+    would dilute the per-trade expectancy. `ex_bars_by_ticker` carries the
+    dividend ex-bars of `applied` events only; the marks never change PnL.
     """
+    bars_by_ticker = ex_bars_by_ticker or {}
     pooled: list[PooledTrade] = []
     for ticker, trades in runs.items():
         closed = [trade for trade in trades if not trade.is_open()]
-        flags = mark_gap_affected(
+        gap_flags = mark_gap_affected(
             closed,
             gaps_by_ticker.get(ticker, {}),
             threshold_percent=gap_threshold_percent,
         )
+        dividend_flags = mark_dividend_affected(closed, bars_by_ticker.get(ticker, ()))
         pooled.extend(
-            PooledTrade(ticker=ticker, trade=trade, gap_affected=flag)
-            for trade, flag in zip(closed, flags, strict=True)
+            PooledTrade(
+                ticker=ticker,
+                trade=trade,
+                gap_affected=gap_flag,
+                dividend_affected=dividend_flag,
+            )
+            for trade, gap_flag, dividend_flag in zip(
+                closed, gap_flags, dividend_flags, strict=True
+            )
         )
     return pooled
 
@@ -348,6 +373,12 @@ class PortfolioSummary:
     gap_affected_trades: int = 0
     gap_affected_net_rub: float = 0.0
     gap_affected_share: float | None = None
+    dividend_affected_trades: int = 0
+    dividend_affected_net_rub: float = 0.0
+    dividend_affected_share: float | None = None
+    phantom_affected_trades: int = 0
+    phantom_affected_net_rub: float = 0.0
+    phantom_affected_share: float | None = None
 
     def describe(self) -> dict:
         return {
@@ -375,6 +406,20 @@ class PortfolioSummary:
             "gap_affected_share": (
                 round(self.gap_affected_share, 4)
                 if self.gap_affected_share is not None
+                else None
+            ),
+            "dividend_affected_trades": self.dividend_affected_trades,
+            "dividend_affected_net_rub": round(self.dividend_affected_net_rub, 2),
+            "dividend_affected_share": (
+                round(self.dividend_affected_share, 4)
+                if self.dividend_affected_share is not None
+                else None
+            ),
+            "phantom_affected_trades": self.phantom_affected_trades,
+            "phantom_affected_net_rub": round(self.phantom_affected_net_rub, 2),
+            "phantom_affected_share": (
+                round(self.phantom_affected_share, 4)
+                if self.phantom_affected_share is not None
                 else None
             ),
         }
@@ -410,6 +455,8 @@ def summarize(pooled: Sequence[PooledTrade], thresholds: MultiInstrumentThreshol
     total_bps = sum(item.bps for item in pooled)
     winners = sum(1 for item in pooled if (item.trade.pnl_net or 0.0) > 0)
     gap_items = [item for item in pooled if item.gap_affected]
+    dividend_items = [item for item in pooled if item.dividend_affected]
+    phantom_items = [item for item in pooled if item.phantom_affected]
 
     summaries: list[TickerSummary] = []
     for ticker, items in sorted(by_ticker.items()):
@@ -448,6 +495,12 @@ def summarize(pooled: Sequence[PooledTrade], thresholds: MultiInstrumentThreshol
         gap_affected_trades=len(gap_items),
         gap_affected_net_rub=sum(item.trade.pnl_net or 0.0 for item in gap_items),
         gap_affected_share=(len(gap_items) / len(pooled) if pooled else None),
+        dividend_affected_trades=len(dividend_items),
+        dividend_affected_net_rub=sum(item.trade.pnl_net or 0.0 for item in dividend_items),
+        dividend_affected_share=(len(dividend_items) / len(pooled) if pooled else None),
+        phantom_affected_trades=len(phantom_items),
+        phantom_affected_net_rub=sum(item.trade.pnl_net or 0.0 for item in phantom_items),
+        phantom_affected_share=(len(phantom_items) / len(pooled) if pooled else None),
     )
 
 
@@ -723,11 +776,18 @@ class PortfolioReport:
     without_gaps_summary: PortfolioSummary
     without_gaps_bootstrap: BlockBootstrap
     without_gaps_verdict: str
+    without_dividends_summary: PortfolioSummary
+    without_dividends_bootstrap: BlockBootstrap
+    without_dividends_verdict: str
+    without_phantom_summary: PortfolioSummary
+    without_phantom_bootstrap: BlockBootstrap
+    without_phantom_verdict: str
     without_thin_summary: PortfolioSummary
     without_thin_bootstrap: BlockBootstrap
     without_thin_verdict: str
     leave_one_out: tuple[VariantResult, ...] = ()
     fragile_verdict: str = ""
+    dividend_coverage: dict | None = None
     extra_meta: dict = field(default_factory=dict)
     snapshot_meta: dict = field(default_factory=dict)
 
@@ -750,6 +810,17 @@ class PortfolioReport:
                 "summary": self.without_gaps_summary.describe(),
                 "bootstrap": self.without_gaps_bootstrap.describe(),
             },
+            "without_dividend_affected": {
+                "verdict": self.without_dividends_verdict,
+                "summary": self.without_dividends_summary.describe(),
+                "bootstrap": self.without_dividends_bootstrap.describe(),
+            },
+            "without_gap_or_dividend_affected": {
+                "verdict": self.without_phantom_verdict,
+                "summary": self.without_phantom_summary.describe(),
+                "bootstrap": self.without_phantom_bootstrap.describe(),
+            },
+            "dividend_coverage": self.dividend_coverage,
             "without_thin_tickers": {
                 "verdict": self.without_thin_verdict,
                 "summary": self.without_thin_summary.describe(),
@@ -763,14 +834,21 @@ def build_report(
     *,
     config: PortfolioConfig,
     thresholds: MultiInstrumentThresholds,
+    dividend_coverage: Mapping[str, object] | None = None,
     extra_meta: Mapping[str, object] | None = None,
     snapshot_meta: Mapping[str, object] | None = None,
 ) -> PortfolioReport:
-    """Summarise the pool: all trades, without gaps, without thin, leave-one-out."""
+    """Summarise the pool: all trades, without gaps/dividends, without thin, LOO."""
 
     summary, bootstrap, verdict = _evaluate(pooled, thresholds)
     clean = [item for item in pooled if not item.gap_affected]
     clean_summary, clean_bootstrap, clean_verdict = _evaluate(clean, thresholds)
+    no_dividends = [item for item in pooled if not item.dividend_affected]
+    no_div_summary, no_div_bootstrap, no_div_verdict = _evaluate(no_dividends, thresholds)
+    phantom_free = [item for item in pooled if not item.phantom_affected]
+    phantom_summary, phantom_bootstrap, phantom_verdict = _evaluate(
+        phantom_free, thresholds
+    )
     thin = set(summary.thin_tickers)
     solid = [item for item in pooled if item.ticker not in thin]
     solid_summary, solid_bootstrap, solid_verdict = _evaluate(solid, thresholds)
@@ -787,14 +865,38 @@ def build_report(
         without_gaps_summary=clean_summary,
         without_gaps_bootstrap=clean_bootstrap,
         without_gaps_verdict=clean_verdict,
+        without_dividends_summary=no_div_summary,
+        without_dividends_bootstrap=no_div_bootstrap,
+        without_dividends_verdict=no_div_verdict,
+        without_phantom_summary=phantom_summary,
+        without_phantom_bootstrap=phantom_bootstrap,
+        without_phantom_verdict=phantom_verdict,
         without_thin_summary=solid_summary,
         without_thin_bootstrap=solid_bootstrap,
         without_thin_verdict=solid_verdict,
         leave_one_out=variants,
         fragile_verdict=fragility_verdict(verdict, variants),
+        dividend_coverage=dict(dividend_coverage) if dividend_coverage else None,
         extra_meta=dict(extra_meta or {}),
         snapshot_meta=dict(snapshot_meta or {}),
     )
+
+
+def _format_years(years: Sequence[int]) -> str:
+    """Compact year list: consecutive runs become ranges (`2020-2022, 2025`)."""
+    ordered = sorted(set(int(year) for year in years))
+    if not ordered:
+        return "—"
+    parts: list[str] = []
+    start = previous = ordered[0]
+    for year in ordered[1:]:
+        if year == previous + 1:
+            previous = year
+            continue
+        parts.append(str(start) if start == previous else f"{start}-{previous}")
+        start = previous = year
+    parts.append(str(start) if start == previous else f"{start}-{previous}")
+    return ", ".join(parts)
 
 
 def render_markdown(report: PortfolioReport) -> str:
@@ -873,6 +975,22 @@ def render_markdown(report: PortfolioReport) -> str:
             ),
         ),
         (
+            "without dividend-affected",
+            (
+                report.without_dividends_summary,
+                report.without_dividends_bootstrap,
+                report.without_dividends_verdict,
+            ),
+        ),
+        (
+            "without gap- or dividend-affected",
+            (
+                report.without_phantom_summary,
+                report.without_phantom_bootstrap,
+                report.without_phantom_verdict,
+            ),
+        ),
+        (
             "without thin tickers",
             (
                 report.without_thin_summary,
@@ -914,13 +1032,13 @@ def render_markdown(report: PortfolioReport) -> str:
         lines.append("Not applicable: the pool has a single ticker.")
     lines.append("")
 
-    lines.append("## Gaps")
+    lines.append("## Gaps and dividends")
     lines.append("")
     lines.append(
         f"Overnight gaps above {thresholds.gap_threshold_percent:g}% inside the holding "
         "period. Candles are not dividend-adjusted, so an ex-dividend gap looks like a "
         "market move: a short collects phantom profit and a long takes a phantom loss. "
-        "The table shows the effect; it does not correct it (T2-22)."
+        "Both marks are informational: PnL and the set of trades do not change (T2-22)."
     )
     lines.append("")
     lines.append(f"- **gap-affected trades**: {summary.gap_affected_trades}")
@@ -931,7 +1049,101 @@ def render_markdown(report: PortfolioReport) -> str:
         if summary.gap_affected_share is not None
         else "- **share of the pool**: —"
     )
+    lines.append(f"- **dividend-affected trades**: {summary.dividend_affected_trades}")
+    lines.append(f"- **their net**: {summary.dividend_affected_net_rub:+.2f} RUB")
+    lines.append(
+        f"- **share of the pool**: "
+        f"{summary.dividend_affected_share:.1%}"
+        if summary.dividend_affected_share is not None
+        else "- **share of the pool**: —"
+    )
+    lines.append(
+        f"- **gap- or dividend-affected**: {summary.phantom_affected_trades} trades, "
+        f"{summary.phantom_affected_net_rub:+.2f} RUB"
+    )
     lines.append("")
+
+    coverage = report.dividend_coverage
+    if coverage:
+        lines.append("## Dividend coverage")
+        lines.append("")
+        lines.append(
+            "Only tickers listed in `config/dividends.json` are covered. An instrument "
+            "missing from the calendar is not assumed to have no dividends: it is listed "
+            "as uncovered, and every large gap it produces stays unexplained (T2-22, "
+            "ADR-025)."
+        )
+        lines.append("")
+        lines.append(f"- **events applied**: {coverage.get('applied', 0)}")
+        lines.append(f"- **events rejected (`no_gap_match`)**: {coverage.get('no_gap_match', 0)}")
+        other = coverage.get("other", 0)
+        if other:
+            lines.append(f"- **events unresolved (no candles / no previous close)**: {other}")
+        missing = coverage.get("missing_years") or {}
+        if missing:
+            known_years = coverage.get("years") or []
+            uncovered = [
+                ticker
+                for ticker, years in sorted(missing.items())
+                if set(years) == set(known_years)
+            ]
+            partial = {
+                ticker: years
+                for ticker, years in sorted(missing.items())
+                if set(years) != set(known_years)
+            }
+            if uncovered:
+                lines.append(
+                    f"- **no events at all** ({len(uncovered)}): " + ", ".join(uncovered)
+                )
+            for ticker, years in partial.items():
+                lines.append(
+                    f"- **{ticker} without events**: {_format_years(years)}"
+                )
+        else:
+            lines.append("- **years without events**: none")
+        rejected = coverage.get("rejected_events") or []
+        if rejected:
+            lines.append(
+                f"- **events not applied** ({len(rejected)}): trades across these bars are "
+                "**not** marked dividend-affected, so they are not clean either — the "
+                "phantom gap is still inside their PnL"
+            )
+            for item in rejected:
+                weekend = " [weekend_ex_bar, see T2-23]" if item.get("weekend_ex_bar") else ""
+                lines.append(
+                    f"  - {item['ticker']} last_buy {item['last_buy_date']}, "
+                    f"ex-bar {str(item['ex_bar_open'])[:10] if item['ex_bar_open'] else '—'}: "
+                    f"`{item['status']}`{weekend} — {item['reason']}"
+                )
+        else:
+            lines.append("- **events not applied**: none")
+        unexplained = coverage.get("unexplained_gaps") or []
+        if unexplained:
+            by_ticker: dict[str, int] = {}
+            for item in unexplained:
+                by_ticker[item["ticker"]] = by_ticker.get(item["ticker"], 0) + 1
+            lines.append(
+                f"- **gaps above {thresholds.gap_threshold_percent:g}% not explained by the "
+                f"calendar**: {len(unexplained)} in {len(by_ticker)} tickers"
+            )
+            lines.append(
+                "  - by ticker: "
+                + ", ".join(f"{ticker} {count}" for ticker, count in sorted(by_ticker.items()))
+            )
+            lines.append("  - largest by size:")
+            for item in sorted(
+                unexplained, key=lambda gap: abs(gap["gap_percent"]), reverse=True
+            )[:15]:
+                lines.append(
+                    f"    - {item['ticker']} {str(item['open_time'])[:10]}: "
+                    f"{item['gap_percent']:+.2f}%"
+                )
+            if len(unexplained) > 15:
+                lines.append("    - ... full list in the JSON snapshot")
+        else:
+            lines.append("- **gaps not explained by the calendar**: none")
+        lines.append("")
 
     lines.append("## Per ticker")
     lines.append("")

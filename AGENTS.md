@@ -84,6 +84,7 @@ Python 3.12, `uv`, PostgreSQL, Dash/Plotly, APScheduler.
 | Heatmap TP/SL (плато или точка) | `uv run python scripts/heatmap.py --ticker SBER --timeframe 4h --tag t2-19` |
 | Мультиинструмент (одно правило, пул сделок) | `uv run python scripts/portfolio_run.py --tag t2-20` |
 | Единый вердикт (гейты: пул, holdout, издержки, плато, null) | `uv run python scripts/verdict.py --tag t2-21 --n-trials 12` |
+| Дивидендный календарь (ручная выгрузка, токен из env) | `uv run python scripts/fetch_dividends.py --write` |
 | Загрузка истории | `uv run python reload_data_v2.py` |
 
 Fallback без `uv`: `.venv\Scripts\python.exe -m pytest -q` (Windows),
@@ -97,7 +98,7 @@ mypy --follow-imports=silent $CLEAN_SET
 pytest -q                    # все тесты, не только CLEAN_SET
 ```
 
-Текущее состояние: **295 тестов зелёный** (на момент написания файла). Не коммитить
+Текущее состояние: **322 теста зелёный** (на момент написания файла). Не коммитить
 с падающими тестами.
 
 `mypy` в `pyproject.toml` исключает `scripts/` — скрипты не типизируются, но обязаны
@@ -173,6 +174,7 @@ pytest -q                    # все тесты, не только CLEAN_SET
 | `src/backtest/null_test.py` | контроль движка: случайные входы | `null_test`, `synthetic_candles`, `classify` |
 | `src/backtest/heatmap.py` | сетка TP/SL: плато или одна точка | `score_cells`, `analyze_plateau`, `analyze_plateau_around`, `collect_train_trades` |
 | `src/backtest/portfolio.py` | мультиинструмент: пул, блочный bootstrap | `pool_trades`, `block_bootstrap`, `summarize`, `build_report`, `leave_one_out_variants` |
+| `src/backtest/dividends.py` | дивидендный календарь: пометка сделок, покрытие | `load_dividends`, `resolve_events`, `find_ex_bar`, `mark_dividend_affected`, `build_coverage` |
 | `src/backtest/verdict.py` | единый вердикт: входы и упорядоченные гейты | `VerdictInputs`, `VerdictThresholds`, `evaluate_verdict`, `render_markdown` |
 | `src/market_data/` | свечи: модели, таймфреймы, PostgreSQL | `Candle`, `Timeframe`, `HistoryManager` |
 | `src/brokers/` | брокер и счета | `AbstractBroker`, `TinkoffSDKBroker`, `BrokerFactory` |
@@ -242,11 +244,19 @@ in-sample положительный, OOS отрицательный: **в live 
 общий капитал не моделируются). Пул сделок ресемплируется **блоками по времени**
 (30 дней, блок содержит все тикеры, пустые блоки сохраняются), статистика — `sum(bps)/
 trades`. Свечи не скорректированы на дивиденды: сделки с гэпом > 5% помечаются
-`gap_affected`, отчёт печатает итоги с ними и без них (календарь — T2-22). Набор выбран
+`gap_affected`, отчёт печатает итоги с ними и без них. Набор выбран
 по сегодняшней ликвидности → смещение выжившего. **Leave-one-out обязателен:** варианты
 «без лучшего тикера» (авто по net ₽), «без SBER», «без двух лучших» пересчитывают
 bootstrap; положительный вердикт, не выживший без лучшего тикера, — `fragile`, а не
 `works` (`fragility_verdict()`, правило T2-21).
+
+**Дивиденды** (ADR-025): `config/dividends.json` + `src/backtest/dividends.py` —
+**только пометка**, PnL и набор сделок не меняются. Отсечка — первый торговый бар
+строго после `last_buy_date` (weekend-бары участвуют); пометка `dividend_affected` при
+`entry_time < ex_bar_open <= exit_time`. Событие применяется, только если падение на
+ex-баре ≥ `gap_match_ratio` (0.3, санитарный пол) от `dividend_gross / prev_close`;
+иначе `no_gap_match` и печать с причиной. `dividend_net` в API — по факту **gross**.
+Денежный поток и налог не моделируются: критерий возврата — ADR-025.
 
 **Вердикт** (ADR-023): итог даёт только `scripts/verdict.py`, не отдельные отчёты.
 Пороги и границы holdout — в `config/validation.json` (секция `verdict`) **до** прогона.
@@ -320,8 +330,8 @@ leave-one-out). `n_trials` — информационное поле, попра
 
 ## 9. Состояние проекта
 
-Закрыто: T0 (блокеры запуска), T2-5/T2-6/T2-7/T2-7a/T2-8/T2-18/T2-19/T2-20/T2-20a/T2-21,
-T3-3/T3-4/T3-5/T3-6/T3-9/T3-10, T4-1/T4-2/T4-5, T5-2/T5-6, T6-1…T6-6.
+Закрыто: T0 (блокеры запуска), T2-5/T2-6/T2-7/T2-7a/T2-8/T2-18/T2-19/T2-20/T2-20a/T2-21/T2-22,
+T3-3/T3-4/T3-5/T3-6/T3-9/T3-10, T4-1/T4-2/T4-5, T5-2/T5-6, T6-1…T6-6/T6-9/T6-10.
 Подробности и цифры — `docs/TASKS.md`, `docs/CHANGELOG.md`.
 
 Следующие по приоритету:
@@ -329,7 +339,7 @@ T3-3/T3-4/T3-5/T3-6/T3-9/T3-10, T4-1/T4-2/T4-5, T5-2/T5-6, T6-1…T6-6.
 | ID | Задача | Зачем |
 |---|---|---|
 | T2-17 | сверка маржи с отчётом брокера | `MARGIN_SHORT_UNCOVERED=True` — допущение; ждёт выписку |
-| T2-22 | календарь дивидендов (`GetDividends`) | фантомные гэпы на отсечках искажают PnL шортов и лонгов |
+| T2-23 | weekend-бары MOEX (доля сделок, гэп через выходные) | с 2025-03 торги выходного дня; MTSS 2025 делит дивидендный гэп |
 | T3-7 | `Trade` / `LiveTrade` → общий `TradeRecord` | две модели сделки расходятся |
 | T2-4 | Alembic + перенос старых данных | ручные миграции |
 | T2-9 | Sortino/Calmar/VaR/R-multiple | метрики риска |

@@ -76,6 +76,8 @@ p_selima_v8.1/
 │   ├── trading_mode.py                [C] TRADING_MODE=dry_run|live (+LIVE_CONFIRM), по умолчанию dry_run
 │   ├── commissions.py                 [C] комиссии: 0.05% за операцию, маржинальные брекеты
 │   ├── costs.json                     [C] издержки бэктеста по инструментам: спред/проскальзывание (ADR-016)
+│   ├── dividends.json                 [C] дивидендный календарь: `last_buy_date`, `dividend_gross`,
+│   │                                      `source: api|manual`; version + sha256 (ADR-025)
 │   └── tp_sl.json                     [C] TP/SL по стратегиям + version/sha256; нет ключа — ошибка (ADR-019)
 │
 ├── src/
@@ -147,6 +149,9 @@ p_selima_v8.1/
 │   │   │                                  TP/SL из config/tp_sl.json, MissingExitPolicyError (ADR-019)
 │   │   ├── costs.py                   [C] CostModel: спред (½ на сторону), проскальзывание,
 │   │   │                                  tp_penalty (чувствительность), метки GROSS/NET (ADR-016)
+│   │   ├── dividends.py               [C] дивидендный календарь: отсечка = первый бар строго
+│   │   │                                  после `last_buy_date`, сопоставление с падением,
+│   │   │                                  пометка `dividend_affected`, покрытие (ADR-025)
 │   │   ├── walk_forward.py            [C] окна train/test, отбор параметров на train, OOS-прогон (ADR-015)
 │   │   ├── null_test.py               [C] контроль движка: случайные входы должны терять издержки (ADR-020)
 │   │   ├── heatmap.py                 [C] сетка TP/SL: плато или одна точка, пороги из validation.json (ADR-021)
@@ -171,6 +176,8 @@ p_selima_v8.1/
 │   ├── test_heatmap.py                heatmap: скоринг в bps, все ветки плато, train-изоляция, отчёты
 │   ├── test_portfolio.py              мультиинструмент: фингерпринты, пул, блоки, гэпы, вердикты
 │   ├── test_verdict.py                вердикт: каждый гейт, порядок групп, флаги, отсутствие входов
+│   ├── test_dividends.py              дивиденды: отсечка после `last_buy_date`, сопоставление с падением,
+│   │                                  пометка, покрытие, sha256, ручные записи без reference
 │   └── test_allow_short_parity.py     backtest и live одинаково соблюдают allow_short
 │
 ├── dashboard/                         [C] актуальный дашборд
@@ -192,6 +199,7 @@ p_selima_v8.1/
 │                                          null_test.py (случайные входы против издержек, ADR-020),
 │                                          heatmap.py (сетка TP/SL: плато, Markdown + CSV, ADR-021),
 │                                          portfolio_run.py (мультиинструмент: пул, блочный bootstrap, ADR-022),
+│                                          fetch_dividends.py (выгрузка дивидендов со сверкой FIGI, ADR-025),
 │                                          verdict.py (единый вердикт: сборка входов, Markdown + JSON, ADR-023)
 ├── optimization/                      [T] grid_tp_sl_dual_ma.py, optimize_macd_plus.py,
 │                                          _check_db.py, tz_ml_optimization.md (ТЗ на ML)
@@ -281,6 +289,7 @@ PostgreSQL (`PgLiveTradeRepository` / `PgStopOrderRepository`). SQLite-репо�
 | `ExitPolicy` (`exit_policy.py`) | `config/tp_sl.json` | `TradeSimulator`, `BaseStrategy` |
 | `WalkForward` / `Heatmap` (`walk_forward.py`, `heatmap.py`) | runner стратегии, `config/validation.json` | `scripts/walk_forward.py`, `scripts/heatmap.py` |
 | `Portfolio` (`portfolio.py`) | runner стратегии, `config/portfolio.json`, `config/costs.json` | `scripts/portfolio_run.py` |
+| `Dividends` (`dividends.py`) | `config/dividends.json`, `config/validation.json` (секция `dividends`), свечи | `portfolio.py`, `scripts/portfolio_run.py`, `scripts/verdict.py` |
 | `Verdict` (`verdict.py`) | `IntervalResult`-входы от `portfolio.py`, `heatmap.py`, `null_test.py`, `config/validation.json` (секция `verdict`) | `scripts/verdict.py` |
 | `CostModel` (`costs.py`) | `config/commissions.py`, `config/costs.json` | `TradeSimulator`, `scripts/*` |
 | `StrategyFactory` | `strategy_registry` | scheduler, dashboard |
@@ -357,6 +366,21 @@ PnL считается тремя слоями: `pnl_price` (сырые цены
 
 Используются разные модели: `Trade` (симуляция) и `LiveTrade` (реальная торговля),
 см. `docs/STRATEGY_CONTRACT.md`.
+
+**Дивиденды** (`src/backtest/dividends.py`, ADR-025). Свечи не корректируются, PnL не
+меняется — сделка только помечается:
+
+| Правило | Значение |
+|---|---|
+| отсечка (ex-бар) | первый торговый бар строго после `last_buy_date`; weekend-бары участвуют |
+| пометка | `entry_time < ex_bar_open <= exit_time` (то же окно, что у `gap_affected`) |
+| применение события | падение на ex-баре ≥ `gap_match_ratio` (0.3) от `dividend_gross / prev_close`; рост не считается никогда |
+| иначе | `no_gap_match`: событие печатается с причиной, сделки не помечаются |
+| `dividend_net` в API | по факту **gross**: SBER 2024 вернул 33.30 при объявленных 33.30 ₽ |
+
+Набор сделок обязан совпадать с календарём и без него. Отчёт печатает варианты «без
+dividend-affected» и «без gap- или dividend-affected» рядом с обычными итогами, плюс
+покрытие: тикеры и годы без событий, гэпы >5%, которые календарь не объясняет.
 
 ---
 

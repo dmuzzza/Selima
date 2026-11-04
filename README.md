@@ -9,16 +9,23 @@
 **Закрыты:** блокеры запуска (T0), безопасность режима торговли (T4-1/2/5),
 единый движок бэктеста (T2-1/T3-3), модель исполнения симулятора (T3-5),
 идемпотентность live-сигналов и восстановление зависших PENDING (T2-5/T2-6),
-CI и защита веток (T2-14/T5-2/T5-6). `pytest` — 52 passed.
+walk-forward и OOS (T2-8), null-тест (T2-18), heatmap (T2-19), мультиинструмент
+(T2-20/T2-20a), единый вердикт (T2-21), дивидендный календарь (T2-22),
+CI и защита веток (T2-14/T5-2/T5-6). `pytest` — 322 passed.
 Репозиторий: `https://github.com/dmuzzza/Selima.git`, рабочая ветка `dev`.
 
 Что ещё не сделано:
 
 - нет `Dockerfile` / `docker-compose.yml` (T5-3, T5-4, T2-15);
-- не закрыт P0-риск переобучения: walk-forward вместо подбора TP/SL на всей
-  истории (T2-8);
+- маржа шорта и списание за шорт через отсечку не сверены с выпиской брокера (T2-17);
+- торги выходного дня (с 2025-03) не учтены отдельно: гэп через выходные и издержки —
+  открытый вопрос (T2-23);
 - legacy-мусор в структуре: `src/sma_crossover/`, `app_dashboard.py`, одноразовые скрипты
   в корне (T1-2, T1-3).
+
+Стратегия `dual_ma_crossover_after_testing` (4h, TP 2.5 / SL 2.0, 20 тикеров) по
+итогам T2-21/T2-22 — **`inconclusive`**: пул 929 сделок +2.71 bps, CI95
+[−15.53; +22.42], holdout −15.83 bps. В live не включается.
 
 Подробный разбор — [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), план работ —
 [docs/TASKS.md](docs/TASKS.md).
@@ -36,6 +43,7 @@ CI и защита веток (T2-14/T5-2/T5-6). `pytest` — 52 passed.
 | Dash-дашборд: свечи, индикаторы, уровни, сделки | `dashboard/` |
 | Планировщик (P0/P1/P2) | `scheduler.py` |
 | Уведомления в VK без сделок | `scheduler_notifier.py` |
+| Дивидендный календарь: пометка сделок на отсечках (PnL не меняется) | `src/backtest/dividends.py`, `config/dividends.json` |
 
 ## Стек
 
@@ -109,7 +117,7 @@ p_selima_v8.1/
 ├── scheduler_notifier.py    # только сигналы + уведомления в VK
 ├── app_dashboard.py         # legacy-дашборд-монолит (~1800 строк)
 ├── dashboard/               # актуальный дашборд (пакет)
-├── config/                  # instruments.json, costs.json, tp_sl.json, комиссии, лимиты
+├── config/                  # instruments.json, costs.json, tp_sl.json, dividends.json, комиссии, лимиты
 ├── src/                     # ядро: brokers, market_data, strategies, trading, ...
 ├── migrations/              # ручные миграции (SQLite legacy + PostgreSQL signal_key)
 ├── scripts/                 # одноразовые утилиты и экспорт
@@ -161,6 +169,8 @@ p_selima_v8.1/
 | Heatmap TP/SL: плато или одна точка (Markdown + CSV в `debug/`) | `uv run python scripts/heatmap.py --ticker SBER --timeframe 4h --tag t2-19` |
 | Мультиинструмент: одно правило на 20 бумагах (Markdown + CSV + JSON) | `uv run python scripts/portfolio_run.py --tag t2-20` |
 | Единый вердикт: гейты по пулу, holdout, издержкам, плато, null-тесту (Markdown + JSON) | `uv run python scripts/verdict.py --tag t2-21 --n-trials 12` |
+| Дивиденды: выгрузка календаря из API (ручной запуск, токен из env) | `uv run python scripts/fetch_dividends.py --tickers SBER SNGSP --write` |
+| Чувствительность: прогон без дивидендного календаря | `--no-dividends` в `portfolio_run.py` и `verdict.py` |
 | Чувствительность: издержки ×2 / TP-штраф / уровни от цены исполнения | `--spread-bps 4 --slippage-bps 6`, `--tp-penalty-bps 4`, `--levels-from-fill` |
 | Тесты | `uv run pytest` |
 | Линтер / типы | `uv run ruff check .` / `uv run mypy src` |
