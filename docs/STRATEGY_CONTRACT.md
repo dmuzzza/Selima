@@ -277,7 +277,8 @@ class RSIReversalStrategy(BaseStrategy):
    (а) сигнал есть/нет на заданном паттерне, (б) число сделок, (в) знак PnL.
 10. Прогон `strategy.run(real_candles)` без исключений, `stats.closed_trades > 0`.
 11. Проверка `check_last_signal` на последней свече совпадает с последним сигналом
-    `detect_signals` (защита от расхождения backtest/live).
+    `detect_signals` (защита от расхождения backtest/live). Общий тест паритета —
+    `tests/test_backtest_live_parity.py` (T3-8, ADR-027).
 12. Обновить `docs/ARCHITECTURE.md` (дерево) и `docs/CHANGELOG.md`.
 
 ---
@@ -294,6 +295,8 @@ class RSIReversalStrategy(BaseStrategy):
 | Смешение naive/aware datetime | `datetime.now()` в `orchestrator.py:211` при aware-времени в БД |
 | Дублирование модели сделки | `src/backtest/backtester.py:34` — свой `Trade` |
 | Сеть в конструкторе | `PositionManager(token, account_id)` создаёт клиента при инициализации |
+| Фильтр входа только в одной ветви | `entry_filter` (EMA200) вызывается в бэктесте, но не в live — live берёт сделки, которые бэктест отклоняет (T3-8b) |
+| Разный набор свечей на путях | live отбрасывает `volume == 0` и требует ≥ 51 бар, бэктест — нет: индикаторы и бар сигнала расходятся (T3-8b) |
 
 ---
 
@@ -307,7 +310,7 @@ class RSIReversalStrategy(BaseStrategy):
 | 4 | ~~Вынести цикл TP/SL в `TradeSimulator`, стратегии вызывают его~~ — **сделано (T3-3)** | — |
 | 5 | ~~Ввести `ExitPolicy`, перенести TP/SL-таблицы в конфиг~~ — **сделано (T3-4, ADR-019)** | — |
 | 6 | Перевести `LiveTrade` и `Trade` на общий `TradeRecord` (или явный маппер) | высокий |
-| 7 | Добавить тест-паритет: `detect_signals` vs `check_last_signal`, бэктест vs live-параметры | — |
+| 7 | ~~Добавить тест-паритет: `detect_signals` vs `check_last_signal`, бэктест vs live-параметры~~ — **сделано (T3-8, ADR-027):** `tests/test_backtest_live_parity.py`, 24 теста; остаточные расхождения — `KNOWN_DIVERGENCES` (T3-8a, T3-8b) | — |
 
 Критерий завершения: новая стратегия добавляется двумя файлами (`config.py`,
 `strategy.py`) внутри своего пакета — без правок в реестре — и для неё автоматически
