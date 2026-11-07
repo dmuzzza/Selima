@@ -8,8 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from config import commissions as commissions_config
-
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("cost_audit", ROOT / "scripts" / "cost_audit.py")
 assert SPEC and SPEC.loader
@@ -85,8 +83,8 @@ def fingerprint(
     return "|".join(parts)
 
 
-def test_replay_uses_the_margin_model_recorded_in_the_snapshot(tmp_path, monkeypatch):
-    """A =0 snapshot must not be attributed with the =1 default (the audit bug)."""
+def test_replay_uses_the_margin_model_recorded_in_the_snapshot(tmp_path):
+    """A legacy =0 snapshot must not be attributed with the current model."""
     # Short held over two nights: 100 000 notional -> 75 RUB per night.
     trade = fingerprint(
         datetime(2026, 1, 5, 10),
@@ -112,13 +110,12 @@ def test_replay_uses_the_margin_model_recorded_in_the_snapshot(tmp_path, monkeyp
         margin_short_uncovered=True,
     )
 
-    monkeypatch.setattr(commissions_config, "MARGIN_SHORT_UNCOVERED", True)
     assert cost_audit.replay(covered, "covered").trades[0].margin == 0.0
     assert cost_audit.replay(uncovered, "uncovered").trades[0].margin == pytest.approx(150.0)
 
 
-def test_replay_falls_back_to_the_process_default_for_old_snapshots(tmp_path, monkeypatch):
-    """Snapshots written before ADR-018 carry no model; the env still applies."""
+def test_replay_falls_back_to_the_current_tariff_for_old_snapshots(tmp_path):
+    """Snapshots written before ADR-018 carry no model: the current table applies."""
     trade = fingerprint(
         datetime(2026, 1, 5, 10),
         100.0,
@@ -134,7 +131,6 @@ def test_replay_falls_back_to_the_process_default_for_old_snapshots(tmp_path, mo
         costs={"mode": "bps", "commission_mode": "ALL"},
     )
 
-    monkeypatch.setattr(commissions_config, "MARGIN_SHORT_UNCOVERED", True)
     run = cost_audit.replay(old, "old")
     assert run.short_uncovered is None
     assert run.trades[0].margin == pytest.approx(150.0)

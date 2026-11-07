@@ -387,6 +387,15 @@ def test_markdown_marks_missing_inputs():
     assert "| holdout | — | — | missing |" in text
 
 
+def test_markdown_lists_known_assumptions():
+    """A positive verdict must still say which costs are unverified (T2-17a)."""
+    text = render_markdown(evaluate_verdict(inputs(), THRESHOLDS))
+
+    assert "## Assumptions" in text
+    assert "T2-17a" in text
+    assert "ex-dividend" in text
+
+
 def test_describe_is_json_serialisable():
     result = evaluate_verdict(inputs(), THRESHOLDS)
 

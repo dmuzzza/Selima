@@ -29,12 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import ClassVar, Dict, List, Optional
 
-from config import commissions as commissions_config
-from config.commissions import (
-    TRANSACTION_COMMISSION_PERCENT,
-    calculate_margin_fee,
-    margin_nights,
-)
+from config.commissions import calculate_trade_commissions
 from src.backtest.exit_policy import resolve_exit_policy
 from src.market_data.models import Candle
 from src.market_data.preparation import prepare_candles
@@ -716,9 +711,10 @@ class BaseStrategy(ABC):
         Рассчитать все комиссии для сделки.
 
         Транзакционная комиссия: 0.05% за открытие + 0.05% за закрытие
-        Маржинальная комиссия: только за перенос НЕПОКРЫТОЙ позиции
-        (позиция минус собственные средства), только если она больше
-        MARGIN_MIN_UNCOVERED и только за дни переноса (ADR-018).
+        Маржинальная комиссия: только за перенос ЗАНЯТОЙ у брокера суммы
+        (для лонга — позиция минус собственные средства, для шорта — вся
+        стоимость заёма), по тарифной таблице за каждый календарный день
+        (ADR-018).
 
         Режим применения регулируется через config/commissions.py → COMMISSION_MODE:
             "ALL"        — на все сделки
@@ -732,57 +728,19 @@ class BaseStrategy(ABC):
                 передан, считается, что позиция полностью покрыта, и плата за
                 перенос не начисляется.
         """
-        commission_mode = commissions_config.COMMISSION_MODE
-        # Проверка режима комиссий
-        if commission_mode == "NONE":
-            trade.commission_open = 0.0
-            trade.commission_close = 0.0
-            trade.commission_margin = 0.0
-            trade.commission_total = 0.0
-            return
-
-        if commission_mode == "LONG_ONLY" and trade.is_short():
-            trade.commission_open = 0.0
-            trade.commission_close = 0.0
-            trade.commission_margin = 0.0
-            trade.commission_total = 0.0
-            return
-
-        if commission_mode == "SHORT_ONLY" and trade.is_long():
-            trade.commission_open = 0.0
-            trade.commission_close = 0.0
-            trade.commission_margin = 0.0
-            trade.commission_total = 0.0
-            return
-
-        # Транзакционная комиссия (открытие)
-        trade.commission_open = trade.quantity * (TRANSACTION_COMMISSION_PERCENT / 100)
-        
-        # Транзакционная комиссия (закрытие)
-        if trade.exit_price:
-            exit_value = trade.quantity * (trade.exit_price / trade.entry_price)
-            trade.commission_close = exit_value * (TRANSACTION_COMMISSION_PERCENT / 100)
-        else:
-            trade.commission_close = 0.0
-        
-        # Маржинальная комиссия: только непокрытая часть и только за перенос
-        if trade.exit_time:
-            nights = margin_nights(trade.entry_time, trade.exit_time)
-            trade.commission_margin = calculate_margin_fee(
-                trade.quantity,
-                own_funds if own_funds is not None else trade.quantity,
-                nights,
-                is_short=trade.is_short(),
-            )
-        else:
-            trade.commission_margin = 0.0
-        
-        # Итого
-        trade.commission_total = (
-            trade.commission_open + 
-            trade.commission_close + 
-            trade.commission_margin
+        fees = calculate_trade_commissions(
+            quantity=trade.quantity,
+            entry_price=trade.entry_price,
+            exit_price=trade.exit_price,
+            entry_time=trade.entry_time,
+            exit_time=trade.exit_time,
+            is_long=trade.is_long(),
+            own_funds=own_funds if own_funds is not None else trade.quantity,
         )
+        trade.commission_open = fees.open
+        trade.commission_close = fees.close
+        trade.commission_margin = fees.margin
+        trade.commission_total = fees.total
 
 
     def _calculate_pnl(self, trade: Trade, current_balance: float) -> None:

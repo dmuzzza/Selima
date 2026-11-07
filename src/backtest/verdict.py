@@ -53,6 +53,13 @@ DEFAULT_COST_MULTIPLIER = 2.0
 DEFAULT_TP_PENALTY_BPS = 4.0
 DEFAULT_OOS_RATIO_MIN_PERCENT = 50.0
 
+# Known unverified assumptions of the cost model. Printed in every verdict: a
+# positive result must not be read as "every cost is confirmed" (ADR-018, T2-17a).
+KNOWN_ASSUMPTIONS: tuple[str, ...] = (
+    "T2-17a: the broker's charge for a short held through an ex-dividend date is "
+    "not verified; the model assumes the short pays the gross dividend.",
+)
+
 
 @dataclass(frozen=True)
 class VerdictThresholds:
@@ -533,6 +540,12 @@ def render_markdown(result: VerdictResult) -> str:
     lines.append(f"- **tradable**: {inputs.tradable}")
     for label, value in result.flags.items():
         lines.append(f"- **{label}**: {value}")
+    lines.append("")
+
+    lines.append("## Assumptions")
+    lines.append("")
+    for item in KNOWN_ASSUMPTIONS:
+        lines.append(f"- {item}")
     lines.append("")
 
     lines.append("## Thresholds")

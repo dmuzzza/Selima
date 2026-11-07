@@ -42,11 +42,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from config.commissions import (  # noqa: E402
-    TRANSACTION_COMMISSION_PERCENT,
-    calculate_margin_fee,
-    margin_nights,
-)
+from config.commissions import calculate_trade_commissions  # noqa: E402
 
 DEFAULT_INITIAL_BALANCE = 50_000.0
 DEFAULT_POSITION_SIZE_PERCENT = 100.0
@@ -162,28 +158,19 @@ def _commission(
     own_funds: float | None = None,
     short_uncovered: bool | None = None,
 ) -> tuple[float, float]:
-    """Transaction and margin commission, mirroring BaseStrategy._calculate_commissions."""
-    if mode == "NONE":
-        return 0.0, 0.0
-    if mode == "LONG_ONLY" and not is_long:
-        return 0.0, 0.0
-    if mode == "SHORT_ONLY" and is_long:
-        return 0.0, 0.0
-
-    rate = TRANSACTION_COMMISSION_PERCENT / 100.0
-    commission = quantity * rate
-    if exit_price is not None:
-        commission += quantity * (exit_price / entry_price) * rate
-    margin = 0.0
-    if exit_time is not None:
-        margin = calculate_margin_fee(
-            quantity,
-            own_funds if own_funds is not None else quantity,
-            margin_nights(entry_time, exit_time),
-            is_short=not is_long,
-            short_uncovered=short_uncovered,
-        )
-    return commission, margin
+    """Transaction and margin commission, from the shared broker model (ADR-018)."""
+    fees = calculate_trade_commissions(
+        quantity=quantity,
+        entry_price=entry_price,
+        exit_price=exit_price,
+        entry_time=entry_time,
+        exit_time=exit_time,
+        is_long=is_long,
+        own_funds=own_funds,
+        mode=mode,
+        short_uncovered=short_uncovered,
+    )
+    return fees.open + fees.close, fees.margin
 
 
 def replay(snapshot_path: Path, label: str) -> Run:
