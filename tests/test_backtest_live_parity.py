@@ -11,6 +11,8 @@ What is compared
 * Live decision from `TradingScheduler._process_instrument` against the
   backtest trade of `TradeSimulator` for the same signal.
 * TP/SL percentages, direction, signal bar, one-position rule, idempotency.
+* Candle preparation: both entry points call `prepare_candles()`, so zero-volume
+  bars and the warmup are handled in one place (ADR-028).
 
 What is deliberately not compared
 ---------------------------------
@@ -36,6 +38,7 @@ from src.backtest.exit_policy import MissingExitPolicyError
 from src.brokers.position_manager import TradeParameters
 from src.brokers.trade_executor import TradeExecutionResult, TradeExecutor
 from src.market_data.models import Candle
+from src.market_data.preparation import prepare_candles
 from src.strategies.dual_ma_crossover_after_testing import DualMACrossoverStrategy
 from src.trading.models import TradeStatus
 from src.trading.orchestrator import TradingOrchestrator
@@ -87,24 +90,6 @@ KNOWN_DIVERGENCES: tuple[KnownDivergence, ...] = (
         ),
         task="T3-8a",
         review_by="2027-05-01",
-    ),
-    KnownDivergence(
-        field="entry_filter",
-        reason=(
-            "backtest applies entry_filter (EMA200 + adaptive deviation) on the entry "
-            "bar, live never calls it: live takes trades the backtest rejects"
-        ),
-        task="T3-8b",
-        review_by="2026-12-01",
-    ),
-    KnownDivergence(
-        field="candles with volume == 0",
-        reason=(
-            "live drops zero-volume candles and requires >= 51 bars, the backtest uses "
-            "every candle, so indicator values and signals can differ"
-        ),
-        task="T3-8b",
-        review_by="2026-12-01",
     ),
     KnownDivergence(
         field="entry bar offset",
@@ -175,8 +160,14 @@ SIGNAL_BARS = (200, 240, 280, 320, 360)
 TRADED_SIGNAL_BARS = (200, 280, 360)
 
 
-def with_zero_volume(candles: list[Candle], every: int = 10) -> list[Candle]:
-    """Same prices, but every `every`-th bar has no volume, like a stale bar."""
+def with_zero_volume(
+    candles: list[Candle], every: int = 10, offset: int = 5
+) -> list[Candle]:
+    """Same prices, but every `every`-th bar (from `offset`) has no volume.
+
+    The offset keeps the bars that carry signals (200, 240, ...) intact, so a
+    test can tell "the bar is dropped" from "the signal disappeared".
+    """
     return [
         Candle(
             open_time=candle.open_time,
@@ -184,16 +175,11 @@ def with_zero_volume(candles: list[Candle], every: int = 10) -> list[Candle]:
             high=candle.high,
             low=candle.low,
             close=candle.close,
-            volume=0 if index % every == 0 else candle.volume,
+            volume=0 if (index - offset) % every == 0 and index >= offset else candle.volume,
             is_complete=candle.is_complete,
         )
         for index, candle in enumerate(candles)
     ]
-
-
-def live_view(candles: list[Candle]) -> list[Candle]:
-    """The candle series live actually works with (scheduler.py:468)."""
-    return [candle for candle in candles if candle.volume and candle.volume > 0]
 
 
 def detect(candles: list[Candle], ticker: str, timeframe: str = "4h"):
@@ -416,13 +402,17 @@ def expected_levels(entry_price: float, direction: str, tp_percent: float, sl_pe
 @pytest.mark.parametrize(("ticker", "figi"), [("SBER", SBER_FIGI), ("CRU6", CRU6_FIGI)])
 @pytest.mark.parametrize("dataset", ["all bars have volume", "every 10th bar has zero volume"])
 def test_last_signal_matches_detect_signals_on_every_bar(ticker, figi, dataset):
-    candles = make_candles()
+    raw = make_candles()
     if dataset == "every 10th bar has zero volume":
-        candles = with_zero_volume(candles)
+        raw = with_zero_volume(raw)
     strategy = DualMACrossoverStrategy(timeframe="4h", config={"ticker": ticker})
+    candles = prepare_candles(raw, min_bars=strategy.min_candles)
+    expected_signals = strategy.detect_signals(candles)
 
+    # Prepared indices move when bars are dropped, so the scan starts at the first
+    # signal instead of a fixed bar number.
     checked = 0
-    for index in range(SIGNAL_BARS[0], len(candles)):
+    for index in range(expected_signals[0].candle_index, len(candles)):
         prefix = candles[: index + 1]
         expected = [s for s in strategy.detect_signals(prefix) if s.candle_index == index]
         actual = strategy.check_last_signal(prefix)
@@ -438,31 +428,38 @@ def test_last_signal_matches_detect_signals_on_every_bar(ticker, figi, dataset):
         assert actual.timestamp == expected[0].timestamp
         checked += 1
 
-    assert checked == len(SIGNAL_BARS)
+    assert checked == len(expected_signals)
 
 
-def test_zero_volume_bars_shift_signals_between_paths():
-    """Known parity defect (T3-8b): zero-volume bars are dropped only in live.
+def test_zero_volume_bars_no_longer_change_signals():
+    """Both paths drop zero-volume bars through the same preparation (T3-8b).
 
-    Indicators are computed over a window of bars, so removing zero-volume bars
-    changes the moving averages and moves the crossover to another bar. The
-    backtest trades the bar live never sees.
+    Indicators are computed over a window, so a filter applied on one side only
+    used to move the crossover to another bar. Now `prepare_candles()` runs on
+    both sides, and the two series are the same by construction.
     """
-    candles = with_zero_volume(make_candles())
+    clean = make_candles()
+    stale = with_zero_volume(clean)
     strategy = DualMACrossoverStrategy(timeframe="4h", config={"ticker": "SBER"})
 
-    backtest_signals = strategy.detect_signals(candles)
-    live_signals = strategy.detect_signals(live_view(candles))
+    prepared_stale = prepare_candles(stale, min_bars=strategy.min_candles)
+    assert len(stale) - len(prepared_stale) == 40
 
-    backtest_times = [signal.timestamp for signal in backtest_signals]
-    live_times = [signal.timestamp for signal in live_signals]
+    # Raw input still shifts the signals: that is why preparation must be shared
+    # instead of each path keeping its own filter.
+    raw_times = [signal.timestamp for signal in strategy.detect_signals(stale)]
+    prepared_times = [signal.timestamp for signal in strategy.detect_signals(prepared_stale)]
+    assert raw_times != prepared_times
 
-    assert len(candles) - len(live_view(candles)) == 40
-    assert backtest_times != live_times, (
-        "if these ever match, the zero-volume filter stopped affecting indicators "
-        "and the T3-8b exception must be re-checked"
+    # Both entry points prepare, so they work on the prepared series.
+    assert strategy.run(stale)["signals"] == strategy.detect_signals(prepared_stale)
+
+    # Live, fed the raw series, returns the same signal the backtest acts on.
+    first = strategy.detect_signals(prepared_stale)[0]
+    raw_cut = next(
+        index for index, candle in enumerate(stale) if candle.open_time == first.timestamp
     )
-    assert divergence("candles with volume == 0").task == "T3-8b"
+    assert strategy.check_last_signal(stale[: raw_cut + 1]) == first
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -676,64 +673,93 @@ def test_ticker_without_exit_policy_is_skipped_by_both_paths(monkeypatch):
     assert live.orchestrators == []  # never reached the broker
 
 
-def test_live_takes_trades_the_backtest_rejects_by_entry_filter(monkeypatch):
-    """Known parity defect (T3-8b): `entry_filter` runs only in the backtest.
+def test_no_strategy_specific_entry_filter_remains():
+    """`entry_filter` diverged from live by construction, so dual_ma has none.
 
-    When the filter rejects an entry, the backtest has no trade while live still
-    sends the order. This test locks the defect: it must fail when T3-8b is
-    fixed, and the fix then removes the exception from KNOWN_DIVERGENCES.
+    The deviation filter looked at the entry bar's open, which live does not know
+    when the signal is produced; the EMA-at-entry filter rejected only 10 trades
+    out of 1711. Both were removed (T3-8b, ADR-028), so the base hook is the only
+    one left and it allows every entry on both paths.
     """
+    assert "entry_filter" not in DualMACrossoverStrategy.__dict__
+    assert "max_adaptive_deviation_percent" not in DualMACrossoverStrategy(
+        timeframe="4h", config={"ticker": "SBER"}
+    ).config
+
     candles = make_candles()
-    signal_index = 200
-
-    monkeypatch.setattr(
-        DualMACrossoverStrategy, "entry_filter", lambda self, index, candle, signal: False
-    )
-
     strategy = DualMACrossoverStrategy(timeframe="4h", config={"ticker": "SBER"})
-    assert strategy.run(candles[: signal_index + 2])["trades"] == []
-
-    live = run_live(
-        monkeypatch,
-        candles[: signal_index + 1],
-        ticker="SBER",
-        figi=SBER_FIGI,
-        market_price=candles[signal_index].close,
-    )
-
-    assert live.result == {"signals_count": 1, "trades_count": 1}
-    assert divergence("entry_filter").task == "T3-8b"
+    prepared = prepare_candles(candles, min_bars=strategy.min_candles)
+    signal = strategy.detect_signals(prepared)[0]
+    assert strategy.entry_filter(signal.candle_index + 1, prepared[signal.candle_index + 1], signal)
 
 
-def test_zero_volume_bar_is_dropped_only_in_live(monkeypatch):
-    """Known parity defect (T3-8b): live filters `volume > 0`, the backtest does not.
+def test_zero_volume_bar_is_dropped_by_both_paths(monkeypatch):
+    """A zero-volume bar is invisible to both paths (T3-8b, ADR-028).
 
-    The last bar carries the signal and has zero volume, so live never sees it.
+    The bar that carries the signal has no volume: the shared preparation drops
+    it, the crossover moves to the next bar, and both paths follow it there.
     """
-    candles = make_candles()[:201]
-    candles[-1] = Candle(
-        open_time=candles[-1].open_time,
-        open=candles[-1].open,
-        high=candles[-1].high,
-        low=candles[-1].low,
-        close=candles[-1].close,
+    candles = make_candles()[:203]
+    candles[200] = Candle(
+        open_time=candles[200].open_time,
+        open=candles[200].open,
+        high=candles[200].high,
+        low=candles[200].low,
+        close=candles[200].close,
         volume=0,
         is_complete=True,
     )
 
     strategy = DualMACrossoverStrategy(timeframe="4h", config={"ticker": "SBER"})
-    assert [s.candle_index for s in strategy.detect_signals(candles)] == [200]
+    prepared = prepare_candles(candles, min_bars=strategy.min_candles)
+    assert candles[200].open_time not in {candle.open_time for candle in prepared}
+    assert [s.candle_index for s in strategy.detect_signals(candles)] == [200]  # raw input
+
+    trades = strategy.run(candles)["trades"]
+    assert len(trades) == 1
+    # Entry moves past the dropped bar: prepared index 201 is raw index 202.
+    assert trades[0].entry_time == candles[202].open_time
 
     live = run_live(
         monkeypatch,
-        candles,
+        candles[:202],
         ticker="SBER",
         figi=SBER_FIGI,
-        market_price=candles[-1].close,
+        market_price=candles[201].close,
     )
 
-    assert live.result == {"signals_count": 0, "trades_count": 0}
-    assert divergence("candles with volume == 0").task == "T3-8b"
+    assert live.result == {"signals_count": 1, "trades_count": 1}
+    assert live.trades[0].signal_key is not None
+    assert candles[201].open_time.replace(microsecond=0).isoformat() in live.trades[0].signal_key
+
+
+def test_zero_volume_bar_away_from_the_signal_changes_nothing(monkeypatch):
+    """A dropped bar far from the signal leaves the first trade in place."""
+    candles = make_candles()
+    stale = 300
+    candles[stale] = Candle(
+        open_time=candles[stale].open_time,
+        open=candles[stale].open,
+        high=candles[stale].high,
+        low=candles[stale].low,
+        close=candles[stale].close,
+        volume=0,
+        is_complete=True,
+    )
+
+    strategy = DualMACrossoverStrategy(timeframe="4h", config={"ticker": "SBER"})
+    trades = strategy.run(candles)["trades"]
+    assert [trade.entry_time for trade in trades][0] == candles[201].open_time
+
+    live = run_live(
+        monkeypatch,
+        candles[:201],
+        ticker="SBER",
+        figi=SBER_FIGI,
+        market_price=candles[200].close,
+    )
+
+    assert live.result == {"signals_count": 1, "trades_count": 1}
 
 
 def test_allow_short_false_blocks_shorts_in_both_paths(monkeypatch):

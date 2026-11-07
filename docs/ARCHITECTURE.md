@@ -86,6 +86,8 @@ p_selima_v8.1/
 │   ├── market_data/                   [C]
 │   │   ├── models.py                  dataclass Candle (OHLCV + is_complete + candle_source)
 │   │   ├── timeframe.py               Enum Timeframe: 30m/1h/4h/1d/1w → CandleInterval
+│   │   ├── preparation.py             prepare_candles(): один ряд для бэктеста и live —
+│   │   │                              сортировка, отбрасывание `volume <= 0`, прогрев min_bars (ADR-028)
 │   │   ├── history_manager.py         PostgreSQL: чтение/запись свечей, дедупликация, кэш
 │   │   ├── data_updater.py            обёртка: full_reload(), incremental_update(), instruments.json
 │   │   └── candle_loader.py           загрузка свечей (вспомогательный)
@@ -185,7 +187,8 @@ p_selima_v8.1/
 │   ├── test_allow_short_parity.py     backtest и live одинаково соблюдают allow_short
 │   ├── test_backtest_live_parity.py   паритет решений: сигнал на каждом баре, направление, проценты
 │   │                                  TP/SL, бар сигнала, одна позиция, идемпотентность; список
-│   │                                  исключений KNOWN_DIVERGENCES (ADR-027)
+│   │                                  исключений KNOWN_DIVERGENCES (ADR-027); общая подготовка
+│   │                                  свечей и отсутствие entry_filter (ADR-028)
 │
 ├── dashboard/                         [C] актуальный дашборд
 │   ├── app.py                         точка входа: Dash, init data layer
@@ -348,8 +351,10 @@ sequenceDiagram
 - **Live**: `check_last_signal()` → `execute_live_trades(orchestrator, ...)` → API.
 
 Правила выхода задаются один раз: `ExitPolicy` (сейчас `PercentExitPolicy` из
-`config/tp_sl.json`) в `TradeSimulator`, TP/SL — из конфига стратегии. Критерии входа —
-`detect_signals()` плюс `entry_filter()` (хук на свече исполнения). `allow_short`
+`config/tp_sl.json`) в `TradeSimulator`, TP/SL — из конфига стратегии. Критерий входа —
+`detect_signals()`; `entry_filter()` остаётся хуком базового класса, но стратегии его не
+переопределяют: фильтр, которому нужна цена следующей свечи, live применить не может
+(T3-8b, ADR-028). Ряд свечей на оба пути готовит `prepare_candles()`. `allow_short`
 соблюдается всеми тремя путями: симуляцией, `check_last_signal()` и `execute_live_trades()`.
 
 Модель исполнения (ADR-012) — пессимистичная там, где OHLC не даёт ответа:
@@ -573,8 +578,12 @@ PostgreSQL). Оставлен для legacy-скриптов и локальны
     **Измерено (T3-8, ADR-027):** тест паритета подтверждает дефект — live открывает
     сделку, которую бэктест отклоняет; туда же фильтр свечей `volume > 0` и порог ≥ 51
     бара в live, из-за которых нулевые объёмы сдвигают индикаторы и бар сигнала.
-    Решение (вызывать фильтр в live или убрать из бэктеста) — **T3-8b**, высокий
-    приоритет.
+    **Закрыто (T3-8b, ADR-028):** фильтр удалён из бэктеста (на 20 тикерах он режет 45%
+    входов и ухудшает выборку: +1.45 против +2.66 bps), подготовка свечей вынесена в
+    `src/market_data/preparation.py::prepare_candles()` и вызывается из `BaseStrategy.run()`,
+    `BaseStrategy.check_last_signal()` и `scheduler._process_instrument()`; прогрев задаёт
+    `BaseStrategy.min_candles`. `model_revision` 3: 929 → 1711 сделок, +2.71 → +2.66 bps,
+    оба CI содержат ноль, вердикт `inconclusive`.
 10d. ~~TP/SL жили в `DEFAULT_CONFIG` стратегий, а `BaseStrategy` подставлял `1.5 / 1.0`
     при отсутствии ключа. `scheduler.py` создавал стратегию без тикера, поэтому live
     торговал фолбэком для всех инструментов, а не значениями из конфига; сравнить два

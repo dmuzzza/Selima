@@ -69,9 +69,6 @@ class DualMACrossoverStrategy(BaseStrategy):
         self.use_ema_filter = self.config.get("use_ema_filter", False)
         self.ema_period = self.config.get("ema_period", 200)
 
-        # Фильтр отклонения от MA Adaptive
-        self.max_adaptive_deviation = self.config.get("max_adaptive_deviation_percent", 1.2)
-
         if self.debug:
             self.logger.debug(
                 f"Dual MA Crossover initialized: SMA={self.sma_period}, "
@@ -79,6 +76,14 @@ class DualMACrossoverStrategy(BaseStrategy):
             )
             if self.use_ema_filter:
                 self.logger.debug(f"EMA filter ENABLED: EMA({self.ema_period})")
+
+    @property
+    def min_candles(self) -> int:
+        """Warmup: the longest indicator plus one bar for the crossover."""
+        warmup = max(self.sma_period, self.adaptive_period)
+        if self.use_ema_filter:
+            warmup = max(warmup, self.ema_period)
+        return warmup + 1
 
     # ═══════════════════════════════════════════════════════════════════════
     # СВОЙСТВА СТРАТЕГИИ
@@ -193,11 +198,6 @@ class DualMACrossoverStrategy(BaseStrategy):
         if self.use_ema_filter:
             ema_series = self.calculate_ema_series(candles)
 
-        # Сохраняем для использования в execute_trades (фильтры на входе)
-        self._sma_series = sma_series
-        self._ma_adaptive_series = ma_adaptive_series
-        self._ema_series = ema_series
-        
         signals = []
 
         # Начинаем с индекса, где все индикаторы готовы
@@ -288,53 +288,3 @@ class DualMACrossoverStrategy(BaseStrategy):
         self.logger.info(f"Detected {len(signals)} signals")
         return signals
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # ФИЛЬТРЫ ВХОДА
-    # ═══════════════════════════════════════════════════════════════════════
-
-    def entry_filter(self, candle_index: int, candle: Candle, signal: Signal) -> bool:
-        """
-        Трендовый фильтр EMA и ограничение отклонения от MA Adaptive.
-
-        Симуляция (TP/SL, размер позиции, PnL) выполняется общим движком
-        `TradeSimulator`; здесь остаётся только то, что специфично для стратегии.
-        Фильтры проверяются на свече входа (по `candle.open`).
-        """
-        entry_price = candle.open
-
-        # ФИЛЬТР 1: EMA200 — трендовый фильтр на входе
-        ema_series = getattr(self, "_ema_series", None)
-        if self.use_ema_filter and ema_series is not None:
-            ema_val = ema_series[candle_index]
-            if ema_val is not None:
-                if signal.signal_type == "BULLISH" and entry_price < ema_val:
-                    if self.debug:
-                        self.logger.debug(
-                            f"✗ ENTRY REJECTED (EMA200 filter): "
-                            f"LONG entry_price={entry_price:.2f} < EMA200={ema_val:.2f}"
-                        )
-                    return False
-                if signal.signal_type == "BEARISH" and entry_price > ema_val:
-                    if self.debug:
-                        self.logger.debug(
-                            f"✗ ENTRY REJECTED (EMA200 filter): "
-                            f"SHORT entry_price={entry_price:.2f} > EMA200={ema_val:.2f}"
-                        )
-                    return False
-
-        # ФИЛЬТР 2: Отклонение от MA Adaptive ≤ max_adaptive_deviation
-        adaptive_series = getattr(self, "_ma_adaptive_series", None)
-        if adaptive_series is not None:
-            ma_adaptive_val = adaptive_series[candle_index]
-            if ma_adaptive_val is not None:
-                deviation_pct = abs(entry_price - ma_adaptive_val) / ma_adaptive_val * 100.0
-                if deviation_pct > self.max_adaptive_deviation:
-                    if self.debug:
-                        self.logger.debug(
-                            f"✗ ENTRY REJECTED (adaptive deviation): "
-                            f"|{entry_price:.2f} - MA_Adaptive={ma_adaptive_val:.2f}| "
-                            f"/ {ma_adaptive_val:.2f} = {deviation_pct:.2f}% > {self.max_adaptive_deviation}%"
-                        )
-                    return False
-
-        return True

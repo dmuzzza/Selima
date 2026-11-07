@@ -111,15 +111,21 @@
 
 ```python
 def check_last_signal(self, candles: List[Candle]) -> Optional[Signal]:
+    candles = prepare_candles(candles, min_bars=self.min_candles)  # тот же ряд, что в run()
     signals = self.detect_signals(candles)
     last_index = len(candles) - 1
     return next((s for s in reversed(signals) if s.candle_index == last_index), None)
 ```
 
-**Ограничение:** фильтры входа, зависящие от цены открытия следующей свечи (например,
-`max_adaptive_deviation_percent` в `dual_ma_crossover_after_testing`), на момент сигнала
-неизвестны. Live может открыть сделку, которую бэктест отклонил бы. Устраняется в T3-4,
-когда фильтры переедут в `ExitPolicy`/`EntryPolicy`.
+**Ряд свечей общий с бэктестом (T3-8b, ADR-028).** `prepare_candles()` сортирует бары,
+отбрасывает `volume <= 0` и возвращает пустой список при нехватке `min_candles`; тот же
+вызов делает `run()`. Прогрев задаёт стратегия: `BaseStrategy.min_candles` (по умолчанию 2),
+`dual_ma` — `max(sma_period, adaptive_period[, ema_period]) + 1`. Своя фильтрация свечей в
+стратегии или в `scheduler` запрещена: две копии разойдутся, и сигналы перестанут совпадать.
+
+**Ограничение, снятое в T3-8b:** фильтр входа, зависящий от цены открытия следующей свечи
+(`max_adaptive_deviation_percent`), live применить не может. Такой фильтр из стратегии
+удалён; добавлять его снова нельзя — он снова разведёт бэктест и live.
 
 ### 3.3 `execute_trades(candles) -> List[Trade]` — обязательно для бэктеста
 
@@ -268,18 +274,21 @@ class RSIReversalStrategy(BaseStrategy):
 4. `detect_signals` — чистая, без сети/БД/`datetime.now()`, возвращает `[]` при нехватке данных.
 5. `check_last_signal` не переопределяется (или переопределяется с тем же критерием).
 6. `execute_trades` не пишется — используется `TradeSimulator` (после v2).
-7. TP/SL берутся из `config/tp_sl.json` (через `ExitPolicy`), не из литералов в коде;
+7. `entry_filter` не переопределяется: фильтр, которому нужна цена следующей свечи, live
+   применить не может. `min_candles` переопределяется, если индикаторам нужно больше двух
+   баров — от него зависит прогрев в обоих путях (ADR-028).
+8. TP/SL берутся из `config/tp_sl.json` (через `ExitPolicy`), не из литералов в коде;
    отсутствующий ключ — `MissingExitPolicyError`, дефолта нет (ADR-019).
-8. Регистрация: ничего править не нужно — `@register_strategy` + пакет внутри
+9. Регистрация: ничего править не нужно — `@register_strategy` + пакет внутри
    `src/strategies`. Обязательное условие: `__init__.py` пакета импортирует `strategy`
    (иначе декоратор не выполнится при автообнаружении). Реестр — ADR-014.
-9. Тест: `tests/strategies/test_<code>.py` на синтетических свечах —
-   (а) сигнал есть/нет на заданном паттерне, (б) число сделок, (в) знак PnL.
-10. Прогон `strategy.run(real_candles)` без исключений, `stats.closed_trades > 0`.
-11. Проверка `check_last_signal` на последней свече совпадает с последним сигналом
+10. Тест: `tests/strategies/test_<code>.py` на синтетических свечах —
+    (а) сигнал есть/нет на заданном паттерне, (б) число сделок, (в) знак PnL.
+11. Прогон `strategy.run(real_candles)` без исключений, `stats.closed_trades > 0`.
+12. Проверка `check_last_signal` на последней свече совпадает с последним сигналом
     `detect_signals` (защита от расхождения backtest/live). Общий тест паритета —
     `tests/test_backtest_live_parity.py` (T3-8, ADR-027).
-12. Обновить `docs/ARCHITECTURE.md` (дерево) и `docs/CHANGELOG.md`.
+13. Обновить `docs/ARCHITECTURE.md` (дерево) и `docs/CHANGELOG.md`.
 
 ---
 
@@ -295,8 +304,8 @@ class RSIReversalStrategy(BaseStrategy):
 | Смешение naive/aware datetime | `datetime.now()` в `orchestrator.py:211` при aware-времени в БД |
 | Дублирование модели сделки | `src/backtest/backtester.py:34` — свой `Trade` |
 | Сеть в конструкторе | `PositionManager(token, account_id)` создаёт клиента при инициализации |
-| Фильтр входа только в одной ветви | `entry_filter` (EMA200) вызывается в бэктесте, но не в live — live берёт сделки, которые бэктест отклоняет (T3-8b) |
-| Разный набор свечей на путях | live отбрасывает `volume == 0` и требует ≥ 51 бар, бэктест — нет: индикаторы и бар сигнала расходятся (T3-8b) |
+| Фильтр входа, зависящий от следующей свечи | `max_adaptive_deviation_percent` смотрел `open` бара входа — live его не знает; фильтр удалён (T3-8b, ADR-028) |
+| Своя подготовка свечей на каждом пути | live отбрасывал `volume == 0` и требовал ≥ 51 бар, бэктест — нет: индикаторы и бар сигнала расходились (T3-8b, ADR-028) |
 
 ---
 

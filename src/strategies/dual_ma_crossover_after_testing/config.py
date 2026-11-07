@@ -20,12 +20,9 @@ DEFAULT_CONFIG = {
     "sma_period": 50,  # Быстрая SMA
     "adaptive_period": 14,  # MA Adaptive период
 
-    # EMA фильтр (трендовый фильтр)
+    # EMA фильтр (трендовый фильтр на сигнале: тот же критерий в бэктесте и live)
     "use_ema_filter": True,    # Включить EMA 200 фильтр
     "ema_period": 200,         # Период EMA для фильтра
-
-    # Фильтр отклонения от MA Adaptive
-    "max_adaptive_deviation_percent": 1.2,  # Макс. отклонение цены входа от MA Adaptive, %
 }
 
 

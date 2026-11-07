@@ -26,6 +26,7 @@ from apscheduler.triggers.cron import CronTrigger
 # Импорты из проекта
 from src.market_data.data_updater import DataUpdater
 from src.market_data.history_manager import HistoryManager
+from src.market_data.preparation import prepare_candles
 from src.market_data.timeframe import Timeframe
 from src.backtest.exit_policy import MissingExitPolicyError
 from src.brokers.broker_factory import BrokerFactory
@@ -462,17 +463,8 @@ class TradingScheduler:
             return {"signals_count": 0, "trades_count": 0}
         
         # Загружаем свечи из БД
-        candles = self.history_manager.get_candles(instrument.figi, tf_enum)
-        
-        # Фильтруем пустые свечи
-        candles = [c for c in candles if c.volume and c.volume > 0]
-        
-        if not candles or len(candles) < 51:  # Минимум для SMA50 + 1
-            logger.warning(f"⚠️  Insufficient data: {len(candles)} candles")
-            return {"signals_count": 0, "trades_count": 0}
-        
-        logger.info(f"   📊 Candles: {len(candles)}")
-        
+        raw_candles = self.history_manager.get_candles(instrument.figi, tf_enum)
+
         # Создаём стратегию. Ticker обязателен: TP/SL берутся из
         # config/tp_sl.json по (strategy, timeframe, ticker), дефолта нет (T3-4).
         try:
@@ -484,7 +476,20 @@ class TradingScheduler:
         except MissingExitPolicyError as exc:
             logger.error(f"⛔ TP/SL not configured for {instrument.ticker} {timeframe}: {exc}")
             return {"signals_count": 0, "trades_count": 0}
+
+        # Один набор свечей на оба пути (T3-8b, ADR-028): прогрев и бары с
+        # нулевым объёмом обрабатывает та же функция, что и в BaseStrategy.run().
+        candles = prepare_candles(raw_candles, min_bars=strategy.min_candles)
+        if not candles:
+            logger.warning(
+                f"⚠️  Insufficient data for {instrument.ticker} {timeframe}: "
+                f"{len(raw_candles)} candles, {strategy.min_candles} required"
+            )
+            return {"signals_count": 0, "trades_count": 0}
         
+        logger.info(f"   📊 Candles: {len(candles)}")
+        
+
         # Signal is resolved once, inside the branch below: the test mode builds a
         # synthetic one and the production branch asks the strategy. Calling
         # check_last_signal() here as well ran detect_signals() twice per tick.

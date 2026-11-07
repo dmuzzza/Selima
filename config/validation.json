@@ -1,8 +1,8 @@
 {
   "version": "4",
-  "model_revision": "2",
+  "model_revision": "3",
   "notes": [
-    "model_revision: which measurement model produced a report. 1 — no dividend calendar; 2 — trades spanning an ex-dividend bar are marked (T2-22, ADR-025). Re-running an old hypothesis on a corrected model is not a new trial, so n_trials stays, but the revision records that the numbers moved.",
+    "model_revision: which measurement model produced a report. 1 — no dividend calendar; 2 — trades spanning an ex-dividend bar are marked (T2-22, ADR-025); 3 — entry filter removed and candle preparation shared by the backtest and live (T3-8b, ADR-028): the trade set grew from 929 to 1711, so reports before and after are not comparable. Re-running an old hypothesis on a corrected model is not a new trial, so n_trials stays, but the revision records that the numbers moved.",
     "Thresholds for validation reports (heatmap, verdict). Every report prints them together with the fingerprint, so a decision can be reproduced.",
     "min_trades_per_cell: cells with fewer closed trades do not take part in the plateau decision and are marked in the table.",
     "plateau_margin_percent: a neighbour passes when its net expectancy is within this share of the best cell.",

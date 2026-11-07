@@ -37,6 +37,7 @@ from config.commissions import (
 )
 from src.backtest.exit_policy import resolve_exit_policy
 from src.market_data.models import Candle
+from src.market_data.preparation import prepare_candles
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +304,18 @@ class BaseStrategy(ABC):
         """JSON-ready TP/SL description for reports (fingerprint included)."""
         return self.exit_policy.describe()
 
+    @property
+    def min_candles(self) -> int:
+        """Bars needed before the first signal can be evaluated (warmup).
+
+        The base class only requires a previous bar to compare against.
+        Strategies with indicators override this with their own warmup: the value
+        is passed to `prepare_candles()`, so the backtest and live reject short
+        series at the same point instead of each keeping its own threshold
+        (T3-8b, ADR-028).
+        """
+        return 2
+
     def entry_filter(self, candle_index: int, candle: Candle, signal: Signal) -> bool:
         """
         Разрешить или запретить вход по сигналу (хук для подклассов).
@@ -407,12 +420,18 @@ class BaseStrategy(ABC):
             Signal если сигнал на последней свече, иначе None
 
         Note:
-            Фильтры входа, которые зависят от цены открытия СЛЕДУЮЩЕЙ свечи
-            (например, отклонение от MA в execute_trades), на момент сигнала
-            неизвестны — live может открыть сделку, которую бэктест отклонил бы.
+            Вход готовится общей функцией `prepare_candles()`: тот же набор свечей,
+            что видит бэктест (T3-8b, ADR-028). Фильтры входа, которые зависят от
+            цены открытия СЛЕДУЮЩЕЙ свечи, здесь невозможны — такой фильтр разошёлся
+            бы с бэктестом, поэтому он и не используется.
         """
         if not candles:
             self.logger.warning("No candles for last signal check")
+            return None
+
+        candles = prepare_candles(candles, min_bars=self.min_candles)
+        if not candles:
+            self.logger.warning("Insufficient candles for last signal check")
             return None
 
         signals = self.detect_signals(candles)
@@ -934,6 +953,19 @@ class BaseStrategy(ABC):
             }
         """
         self.logger.info(f"Running {self.name} on {len(candles)} candles...")
+
+        # One series for both paths (T3-8b, ADR-028): warmup and zero-volume bars
+        # are handled by the same function the live path calls.
+        raw_count = len(candles)
+        candles = prepare_candles(candles, min_bars=self.min_candles)
+        if not candles:
+            self.logger.warning(
+                f"Insufficient data: {raw_count} candles, {self.min_candles} required"
+            )
+            self.signals = []
+            self.trades = []
+            self.stats = self.calculate_stats()
+            return {"signals": [], "trades": [], "stats": self.stats}
 
         signals = self.detect_signals(candles)
         trades = self.execute_trades(candles)

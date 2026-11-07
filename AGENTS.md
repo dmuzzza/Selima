@@ -287,6 +287,11 @@ leave-one-out). `n_trials` — информационное поле, попра
 - пакеты с префиксом `_` не регистрируются (`_template`);
 - стратегия пишет только `detect_signals()`; `execute_trades`, `check_last_signal`,
   `execute_live_trades` наследуются — переопределение расходит бэктест и live;
+- `entry_filter()` не переопределяется: он видит `open` свечи входа, которой live на
+  момент сигнала не знает; фильтры живут в `detect_signals()` (ADR-028);
+- ряд свечей на оба пути готовит `src/market_data/preparation.py::prepare_candles()`
+  (сортировка, `volume <= 0`, прогрев `min_candles`); своя фильтрация свечей в стратегии
+  или `scheduler` запрещена (ADR-028);
 - `detect_signals` — чистая: без сети, БД, файлов и `datetime.now()`.
 
 ---

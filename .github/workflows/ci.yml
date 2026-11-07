@@ -23,6 +23,7 @@ env:
     src/backtest/simulator.py
     src/backtest/verdict.py
     src/backtest/walk_forward.py
+    src/market_data/preparation.py
     src/strategies/_null_entry
     src/strategies/_template
     src/strategies/strategy_registry.py
