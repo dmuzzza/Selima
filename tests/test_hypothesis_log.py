@@ -7,19 +7,23 @@ import pytest
 
 from src.backtest import hypothesis_log as journal
 from src.backtest.hypothesis_log import (
+    GENESIS_HASH,
     HypothesisEntry,
     HypothesisLogError,
     TrialBudgetExceeded,
     append_hypothesis,
     budget_state,
     config_sha256,
+    entry_hash,
     load_hypotheses,
     mark_sealed_access,
     quarter_bounds,
+    quarter_ideas,
     quarter_trials,
     record_attempt,
     sealed_access_count,
     trial_count,
+    verify_chain,
 )
 
 UTC_TZ = UTC
@@ -145,23 +149,43 @@ def test_quarter_bounds_and_quarter_filter():
     assert quarter_bounds(date(2026, 1, 1)) == (date(2026, 1, 1), date(2026, 4, 1))
 
     entries = [
-        entry(recorded_at=datetime(2026, 9, 30, 23, 59, tzinfo=UTC), grid_cells=2),
-        entry(recorded_at=datetime(2026, 10, 1, 0, 1, tzinfo=UTC), grid_cells=3),
-        entry(recorded_at=datetime(2026, 12, 31, 23, 59, tzinfo=UTC), grid_cells=4),
-        entry(recorded_at=datetime(2027, 1, 1, 0, 1, tzinfo=UTC), grid_cells=5),
+        entry(recorded_at=datetime(2026, 9, 30, 23, 59, tzinfo=UTC_TZ), grid_cells=2),
+        entry(recorded_at=datetime(2026, 10, 1, 0, 1, tzinfo=UTC_TZ), grid_cells=3),
+        entry(recorded_at=datetime(2026, 12, 31, 23, 59, tzinfo=UTC_TZ), grid_cells=4),
+        entry(recorded_at=datetime(2027, 1, 1, 0, 1, tzinfo=UTC_TZ), grid_cells=5),
     ]
 
     assert quarter_trials(entries, date(2026, 11, 7)) == 7
     assert quarter_trials(entries, date(2027, 2, 1)) == 5
+    assert quarter_ideas(entries, date(2026, 11, 7)) == 2
 
 
-def test_budget_state_reports_used_and_remaining():
+def test_budget_counts_ideas_not_grid_cells():
+    """One heatmap of 20 cells is one idea: it must not burn the quarter."""
     entries = [entry(recorded_at=NOW, grid_cells=20)]
+    state = budget_state(entries, date(2026, 11, 7), limit=20)
+
+    assert state.used == 1
+    assert state.remaining == 19
+    assert not state.exhausted
+    assert trial_count(entries) == 20
+
+
+def test_budget_is_exhausted_after_twenty_ideas():
+    entries = [entry(recorded_at=NOW) for _ in range(20)]
     state = budget_state(entries, date(2026, 11, 7), limit=20)
 
     assert state.used == 20
     assert state.remaining == 0
     assert state.exhausted
+
+
+def test_sealed_marks_do_not_spend_the_idea_budget():
+    entries = [entry(recorded_at=NOW), entry(recorded_at=NOW, kind="sealed", sealed_access=True)]
+    state = budget_state(entries, date(2026, 11, 7), limit=20)
+
+    assert state.used == 1
+    assert sealed_access_count(entries) == 1
 
 
 def test_sealed_access_is_counted():
@@ -196,44 +220,44 @@ def test_record_attempt_writes_and_counts(tmp_path):
 
     assert written.config_sha256 == config_sha256({"tp": 2.5, "sl": 2.0})
     assert trial_count(load_hypotheses(path)) == 20
+    assert budget_state(load_hypotheses(path), NOW.date()).used == 1
 
 
 def test_budget_is_enforced_before_the_line_is_written(tmp_path):
     path = tmp_path / "hypotheses.jsonl"
-    record_attempt(
-        hypothesis="first",
-        strategy="dual_ma",
-        timeframe="4h",
-        tickers=["SBER"],
-        universe_source="portfolio",
-        config={},
-        grid_cells=19,
-        path=path,
-        recorded_at=NOW,
-        limit=20,
-    )
-
-    with pytest.raises(TrialBudgetExceeded, match="19 of 20"):
+    for number in range(20):
         record_attempt(
-            hypothesis="second",
+            hypothesis=f"idea {number}",
             strategy="dual_ma",
             timeframe="4h",
             tickers=["SBER"],
             universe_source="portfolio",
             config={},
-            grid_cells=2,
             path=path,
             recorded_at=NOW,
             limit=20,
         )
 
-    assert len(load_hypotheses(path)) == 1
+    with pytest.raises(TrialBudgetExceeded, match="20 of 20"):
+        record_attempt(
+            hypothesis="twenty first",
+            strategy="dual_ma",
+            timeframe="4h",
+            tickers=["SBER"],
+            universe_source="portfolio",
+            config={},
+            path=path,
+            recorded_at=NOW,
+            limit=20,
+        )
+
+    assert len(load_hypotheses(path)) == 20
 
 
-def test_budget_resets_in_the_next_quarter(tmp_path):
+def test_a_wide_grid_still_costs_one_idea(tmp_path):
     path = tmp_path / "hypotheses.jsonl"
     record_attempt(
-        hypothesis="q4",
+        hypothesis="wide grid",
         strategy="dual_ma",
         timeframe="4h",
         tickers=["SBER"],
@@ -241,9 +265,39 @@ def test_budget_resets_in_the_next_quarter(tmp_path):
         config={},
         grid_cells=20,
         path=path,
-        recorded_at=datetime(2026, 12, 20, 12, 0, tzinfo=UTC),
+        recorded_at=NOW,
         limit=20,
     )
+
+    record_attempt(
+        hypothesis="next idea",
+        strategy="dual_ma",
+        timeframe="4h",
+        tickers=["SBER"],
+        universe_source="portfolio",
+        config={},
+        path=path,
+        recorded_at=NOW,
+        limit=20,
+    )
+
+    assert len(load_hypotheses(path)) == 2
+
+
+def test_budget_resets_in_the_next_quarter(tmp_path):
+    path = tmp_path / "hypotheses.jsonl"
+    for number in range(20):
+        record_attempt(
+            hypothesis=f"q4 {number}",
+            strategy="dual_ma",
+            timeframe="4h",
+            tickers=["SBER"],
+            universe_source="portfolio",
+            config={},
+            path=path,
+            recorded_at=datetime(2026, 12, 20, 12, 0, tzinfo=UTC_TZ),
+            limit=20,
+        )
 
     written = record_attempt(
         hypothesis="q1",
@@ -252,9 +306,8 @@ def test_budget_resets_in_the_next_quarter(tmp_path):
         tickers=["SBER"],
         universe_source="portfolio",
         config={},
-        grid_cells=20,
         path=path,
-        recorded_at=datetime(2027, 1, 10, 12, 0, tzinfo=UTC),
+        recorded_at=datetime(2027, 1, 10, 12, 0, tzinfo=UTC_TZ),
         limit=20,
     )
 
@@ -306,3 +359,98 @@ def test_entry_survives_a_json_round_trip(tmp_path):
     assert restored.tag == "tag-1"
     assert restored.recorded_at == NOW
     assert restored.recorded_at.utcoffset() == timedelta(0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ХЕШ-ЦЕПОЧКА
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_first_line_starts_from_the_genesis_hash(tmp_path):
+    path = tmp_path / "hypotheses.jsonl"
+    append_hypothesis(entry(), path)
+
+    assert load_hypotheses(path)[0].prev_hash == GENESIS_HASH
+
+
+def test_each_line_points_at_the_previous_hash(tmp_path):
+    path = tmp_path / "hypotheses.jsonl"
+    first = append_hypothesis(entry(hypothesis="one"), path)
+    second = append_hypothesis(entry(hypothesis="two"), path)
+
+    assert second.prev_hash == entry_hash(first)
+    assert load_hypotheses(path)[1].prev_hash == entry_hash(first)
+
+
+def test_chain_accepts_a_valid_journal(tmp_path):
+    path = tmp_path / "hypotheses.jsonl"
+    for number in range(3):
+        append_hypothesis(entry(hypothesis=f"idea {number}"), path)
+
+    verify_chain(load_hypotheses(path))
+
+
+def test_rewriting_a_line_breaks_the_chain(tmp_path):
+    """A silent edit in git must not pass as evidence."""
+    path = tmp_path / "hypotheses.jsonl"
+    append_hypothesis(entry(hypothesis="one"), path)
+    append_hypothesis(entry(hypothesis="two"), path)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    lines[0] = lines[0].replace('"hypothesis":"one"', '"hypothesis":"better"')
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(HypothesisLogError, match="broken hash chain"):
+        load_hypotheses(path)
+
+
+def test_deleting_a_line_breaks_the_chain(tmp_path):
+    path = tmp_path / "hypotheses.jsonl"
+    append_hypothesis(entry(hypothesis="one"), path)
+    append_hypothesis(entry(hypothesis="two"), path)
+    append_hypothesis(entry(hypothesis="three"), path)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text("\n".join([lines[0], lines[2]]) + "\n", encoding="utf-8")
+
+    with pytest.raises(HypothesisLogError, match="broken hash chain"):
+        load_hypotheses(path)
+
+
+def test_reordering_lines_breaks_the_chain(tmp_path):
+    path = tmp_path / "hypotheses.jsonl"
+    append_hypothesis(entry(hypothesis="one"), path)
+    append_hypothesis(entry(hypothesis="two"), path)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text("\n".join([lines[1], lines[0]]) + "\n", encoding="utf-8")
+
+    with pytest.raises(HypothesisLogError, match="broken hash chain"):
+        load_hypotheses(path)
+
+
+def test_chain_can_be_skipped_for_a_forensic_read(tmp_path):
+    """`verify=False` exists for inspecting a broken file, not for normal use."""
+    path = tmp_path / "hypotheses.jsonl"
+    append_hypothesis(entry(hypothesis="one"), path)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    lines[0] = lines[0].replace('"hypothesis":"one"', '"hypothesis":"better"')
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    assert load_hypotheses(path, verify=False)[0].hypothesis == "better"
+
+
+def test_entry_hash_changes_with_the_content():
+    assert entry_hash(entry(hypothesis="one")) != entry_hash(entry(hypothesis="two"))
+
+
+def test_entry_hash_is_independent_of_dict_key_order():
+    assert entry_hash(entry()) == entry_hash(entry())
+
+
+def test_new_line_links_to_the_last_one_after_a_sealed_mark(tmp_path):
+    path = tmp_path / "hypotheses.jsonl"
+    first = append_hypothesis(entry(), path)
+    mark = mark_sealed_access(first, path)
+    third = append_hypothesis(entry(hypothesis="after the seal"), path)
+
+    assert mark.prev_hash == entry_hash(first)
+    assert third.prev_hash == entry_hash(mark)
+    verify_chain(load_hypotheses(path))

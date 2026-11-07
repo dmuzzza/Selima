@@ -176,7 +176,7 @@ pytest -q                    # все тесты, не только CLEAN_SET
 | `src/backtest/portfolio.py` | мультиинструмент: пул, блочный bootstrap | `pool_trades`, `block_bootstrap`, `summarize`, `build_report`, `leave_one_out_variants` |
 | `src/backtest/dividends.py` | дивидендный календарь: пометка сделок, покрытие | `load_dividends`, `resolve_events`, `find_ex_bar`, `mark_dividend_affected`, `build_coverage` |
 | `src/backtest/verdict.py` | единый вердикт: входы и упорядоченные гейты | `VerdictInputs`, `VerdictThresholds`, `evaluate_verdict`, `render_markdown` |
-| `src/backtest/hypothesis_log.py` | append-only журнал гипотез: попытки из файла, а не из флага | `HypothesisEntry`, `record_attempt`, `trial_count`, `budget_state` |
+| `src/backtest/hypothesis_log.py` | append-only журнал гипотез с хеш-цепочкой: идеи из файла, а не из флага | `HypothesisEntry`, `record_attempt`, `mark_sealed_access`, `trial_count`, `quarter_ideas`, `verify_chain`, `budget_state` |
 | `src/market_data/` | свечи: модели, таймфреймы, PostgreSQL | `Candle`, `Timeframe`, `HistoryManager` |
 | `src/brokers/` | брокер и счета | `AbstractBroker`, `TinkoffSDKBroker`, `BrokerFactory` |
 | `src/trading/orchestrator.py` | путь реального ордера | `TradingOrchestrator.process_signals` |
@@ -244,9 +244,14 @@ pytest -q                    # все тесты, не только CLEAN_SET
 in-sample положительный, OOS отрицательный: **в live они не включаются**.
 
 **Гипотезы** (ADR-029): число попыток берётся только из `journal/hypotheses.jsonl`
-(append-only), а не из флага. Ячейка heatmap — попытка, `n_trials` — глобально по всем
-идеям, бюджет 20 на квартал. Запечатанный OOS (после `2026-10-01`) не читается без
-`--unseal`; период `2025-10-01…2026-10-01` — разработочный и `works` не даёт.
+(append-only), а не из флага. Бюджет — **20 идей** (`kind="idea"`) на квартал глобально
+по всем стратегиям; `grid_cells` — сколько ячеек просмотрено внутри идеи, идёт в отчёт
+и screening-поправку, но квартал не сжигает. `kind="sealed"` — обращение к запечатанному
+OOS, бюджет не тратит, `k` увеличивает. Каждая строка несёт `prev_hash`, чтение проверяет
+хеш-цепочку. Запечатанный OOS (после `2026-10-01`) не читается без `--unseal`; период
+`2025-10-01…2026-10-01` — разработочный и `works` не даёт. Мощность: при 1 711 сделках
+и 20 идеях различимый edge ≈ 22 bps, для 10 bps нужно ≈ 3 300 сделок — первые идеи
+берутся с бо́льшим edge (событийные) или бо́льшим числом сделок.
 Дизайн команды — `docs/EVALUATE_DESIGN.md` (T2-25).
 
 **Heatmap TP/SL** (ADR-021): решение о плато — только по train-окнам walk-forward;

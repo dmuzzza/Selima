@@ -157,8 +157,8 @@ p_selima_v8.1/
 │   │   ├── walk_forward.py            [C] окна train/test, отбор параметров на train, OOS-прогон (ADR-015)
 │   │   ├── null_test.py               [C] контроль движка: случайные входы должны терять издержки (ADR-020)
 │   │   ├── heatmap.py                 [C] сетка TP/SL: плато или одна точка, пороги из validation.json (ADR-021)
-│   │   ├── hypothesis_log.py          [C] append-only журнал гипотез: попытки из файла, а не из флага;
-│   │   │                                  grid_cells, квартальный бюджет 20, sealed_access (ADR-029)
+│   │   ├── hypothesis_log.py          [C] append-only журнал гипотез с хеш-цепочкой (prev_hash):
+│   │   │                                  бюджет 20 идей, grid_cells для screening, sealed_access (ADR-029)
 │   │   ├── portfolio.py               [C] мультиинструмент: одно правило, независимые счета, блочный bootstrap (ADR-022)
 │   │   ├── verdict.py                 [C] единый вердикт: входы, упорядоченные гейты, Markdown (ADR-023)
 │   │   └── backtester.py              [L] отдельный движок бэктеста (не используется стратегиями)
@@ -220,9 +220,9 @@ p_selima_v8.1/
 ├── archive/                           [L] старый дашборд, web_dashboard, marketdata.db
 ├── data/live_trades.db                SQLite со сделками (в .gitignore)
 ├── logs/                              логи (в .gitignore)
-├── journal/                           [D] append-only журнал гипотез (ADR-029)
-│   ├── hypotheses.jsonl               одна строка JSON на попытку; коммитится
-│   └── README.md                      правила счёта попыток и бюджет
+├── journal/                           [D] append-only журнал гипотез с хеш-цепочкой (ADR-029)
+│   ├── hypotheses.jsonl               одна строка JSON на запись; prev_hash связывает строки; коммитится
+│   └── README.md                      правила счёта (идеи vs grid_cells), бюджет, проверка цепочки
 ├── sdk_t_bank_docs/                   [D] локальная копия документации T-Invest API —
 │   │                                      источник истины по методам, полям и ошибкам
 │   ├── services/                      обзор сервисов (index.mdx) и папки по сервисам
