@@ -1,0 +1,291 @@
+"""Append-only hypothesis journal: every evaluation is a recorded attempt.
+
+Why a journal instead of a `--trials` flag: a self-reported counter is easy to
+understate, and a new strategy name would reset it. The correction for multiple
+testing is only valid if the number of attempts comes from a file that is written
+before the result is known (ADR-029).
+
+One line per attempt, JSONL, append-only. A heatmap of 20 cells is 20 attempts:
+a cell that was looked at was a hypothesis, even if the traded point is not the
+best one.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime
+from pathlib import Path
+
+DEFAULT_JOURNAL_PATH = Path(__file__).resolve().parents[2] / "journal" / "hypotheses.jsonl"
+
+# Attempts per calendar quarter across all strategies and ideas. Twenty keeps the
+# Bonferroni multiplier near 1.54: with sigma ~295 bps and 1711 trades the minimum
+# detectable effect stays around 22 bps, so a 10 bps edge is measurable in
+# principle (ADR-029, docs/EVALUATE_DESIGN.md §6).
+TRIAL_BUDGET_PER_QUARTER = 20
+
+UNIVERSE_SOURCES = ("portfolio", "manual")
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+class HypothesisLogError(ValueError):
+    """The journal or an entry is not usable as evidence."""
+
+
+class TrialBudgetExceeded(HypothesisLogError):
+    """The quarterly attempt budget is spent: close the quarter, do not keep trying."""
+
+
+@dataclass(frozen=True)
+class HypothesisEntry:
+    """One recorded attempt."""
+
+    recorded_at: datetime
+    hypothesis: str
+    strategy: str
+    timeframe: str
+    tickers: tuple[str, ...]
+    universe_source: str
+    config_sha256: str
+    grid_cells: int = 1
+    sealed_access: bool = False
+    tag: str = ""
+    notes: str = ""
+
+    def __post_init__(self) -> None:
+        if self.recorded_at.tzinfo is None:
+            raise HypothesisLogError("recorded_at must be timezone-aware (UTC)")
+        for name in ("hypothesis", "strategy", "timeframe"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise HypothesisLogError(f"{name} must be a non-empty string")
+        if not self.tickers:
+            raise HypothesisLogError("tickers must not be empty")
+        for ticker in self.tickers:
+            if not isinstance(ticker, str) or not ticker.strip():
+                raise HypothesisLogError("every ticker must be a non-empty string")
+        if self.universe_source not in UNIVERSE_SOURCES:
+            raise HypothesisLogError(
+                f"universe_source must be one of {', '.join(UNIVERSE_SOURCES)}, "
+                f"got {self.universe_source!r}"
+            )
+        if not isinstance(self.config_sha256, str) or not _SHA256_RE.match(
+            self.config_sha256
+        ):
+            raise HypothesisLogError("config_sha256 must be a lowercase sha256 hex digest")
+        if not isinstance(self.grid_cells, int) or self.grid_cells < 1:
+            raise HypothesisLogError(f"grid_cells must be an int >= 1, got {self.grid_cells!r}")
+
+    def to_dict(self) -> dict:
+        return {
+            "recorded_at": self.recorded_at.astimezone(UTC).isoformat(),
+            "hypothesis": self.hypothesis,
+            "strategy": self.strategy,
+            "timeframe": self.timeframe,
+            "tickers": list(self.tickers),
+            "universe_source": self.universe_source,
+            "config_sha256": self.config_sha256,
+            "grid_cells": self.grid_cells,
+            "sealed_access": self.sealed_access,
+            "tag": self.tag,
+            "notes": self.notes,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> HypothesisEntry:
+        try:
+            recorded_at = datetime.fromisoformat(str(payload["recorded_at"]))
+            tickers = payload["tickers"]
+            if not isinstance(tickers, Sequence) or isinstance(tickers, (str, bytes)):
+                raise HypothesisLogError("tickers must be a list of strings")
+            raw_cells = payload.get("grid_cells", 1)
+            if not isinstance(raw_cells, int) or isinstance(raw_cells, bool):
+                raise HypothesisLogError("grid_cells must be an integer")
+            return cls(
+                recorded_at=recorded_at,
+                hypothesis=str(payload["hypothesis"]),
+                strategy=str(payload["strategy"]),
+                timeframe=str(payload["timeframe"]),
+                tickers=tuple(str(ticker) for ticker in tickers),
+                universe_source=str(payload["universe_source"]),
+                config_sha256=str(payload["config_sha256"]),
+                grid_cells=raw_cells,
+                sealed_access=bool(payload.get("sealed_access", False)),
+                tag=str(payload.get("tag", "")),
+                notes=str(payload.get("notes", "")),
+            )
+        except KeyError as exc:
+            raise HypothesisLogError(f"missing field {exc.args[0]!r}") from exc
+        except (TypeError, ValueError) as exc:
+            if isinstance(exc, HypothesisLogError):
+                raise
+            raise HypothesisLogError(f"invalid entry: {exc}") from exc
+
+
+@dataclass(frozen=True)
+class BudgetState:
+    """Attempts spent in one calendar quarter."""
+
+    quarter_start: date
+    quarter_end: date
+    used: int
+    limit: int
+
+    @property
+    def remaining(self) -> int:
+        return max(0, self.limit - self.used)
+
+    @property
+    def exhausted(self) -> bool:
+        return self.used >= self.limit
+
+
+def config_sha256(payload: Mapping[str, object]) -> str:
+    """Stable digest of the run parameters, independent of key order."""
+    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def quarter_bounds(day: date) -> tuple[date, date]:
+    """First day of the quarter and the first day of the next one."""
+    start_month = ((day.month - 1) // 3) * 3 + 1
+    start = date(day.year, start_month, 1)
+    end = (
+        date(day.year + 1, 1, 1)
+        if start_month == 10
+        else date(day.year, start_month + 3, 1)
+    )
+    return start, end
+
+
+def load_hypotheses(path: Path | str = DEFAULT_JOURNAL_PATH) -> list[HypothesisEntry]:
+    """Read the journal in append order. A missing file is an empty journal."""
+    journal = Path(path)
+    if not journal.exists():
+        return []
+    entries: list[HypothesisEntry] = []
+    for number, line in enumerate(journal.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise HypothesisLogError(f"{journal}:{number}: invalid JSON: {exc}") from exc
+        if not isinstance(payload, Mapping):
+            raise HypothesisLogError(f"{journal}:{number}: entry must be a JSON object")
+        try:
+            entries.append(HypothesisEntry.from_dict(payload))
+        except HypothesisLogError as exc:
+            raise HypothesisLogError(f"{journal}:{number}: {exc}") from exc
+    return entries
+
+
+def append_hypothesis(
+    entry: HypothesisEntry,
+    path: Path | str = DEFAULT_JOURNAL_PATH,
+) -> HypothesisEntry:
+    """Append one line. Never rewrites existing lines, even if the process dies."""
+    journal = Path(path)
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(entry.to_dict(), ensure_ascii=False, sort_keys=True) + "\n"
+    with journal.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(line)
+        handle.flush()
+        os.fsync(handle.fileno())
+    return entry
+
+
+def record_attempt(
+    *,
+    hypothesis: str,
+    strategy: str,
+    timeframe: str,
+    tickers: Iterable[str],
+    universe_source: str,
+    config: Mapping[str, object],
+    grid_cells: int = 1,
+    sealed_access: bool = False,
+    tag: str = "",
+    notes: str = "",
+    path: Path | str = DEFAULT_JOURNAL_PATH,
+    recorded_at: datetime | None = None,
+    limit: int = TRIAL_BUDGET_PER_QUARTER,
+) -> HypothesisEntry:
+    """Check the quarterly budget, then append the attempt.
+
+    The budget is checked against the quarter of `recorded_at` before the entry
+    is written: a run that would exceed it must not start at all.
+    """
+    moment = recorded_at or datetime.now(UTC)
+    entries = load_hypotheses(path)
+    state = budget_state(entries, moment.date(), limit)
+    if state.used + grid_cells > state.limit:
+        raise TrialBudgetExceeded(
+            f"quarterly trial budget exhausted: {state.used} of {state.limit} used, "
+            f"this run adds {grid_cells}"
+        )
+    entry = HypothesisEntry(
+        recorded_at=moment,
+        hypothesis=hypothesis,
+        strategy=strategy,
+        timeframe=timeframe,
+        tickers=tuple(tickers),
+        universe_source=universe_source,
+        config_sha256=config_sha256(config),
+        grid_cells=grid_cells,
+        sealed_access=sealed_access,
+        tag=tag,
+        notes=notes,
+    )
+    return append_hypothesis(entry, path)
+
+
+def trial_count(entries: Iterable[HypothesisEntry]) -> int:
+    """Attempts across every strategy and idea: the correction uses this number."""
+    return sum(entry.grid_cells for entry in entries)
+
+
+def quarter_trials(entries: Iterable[HypothesisEntry], day: date) -> int:
+    """Attempts inside the calendar quarter of `day`."""
+    start, end = quarter_bounds(day)
+    return sum(
+        entry.grid_cells
+        for entry in entries
+        if start <= entry.recorded_at.date() < end
+    )
+
+
+def sealed_access_count(entries: Iterable[HypothesisEntry]) -> int:
+    """How many times the sealed out-of-sample period was opened."""
+    return sum(1 for entry in entries if entry.sealed_access)
+
+
+def budget_state(
+    entries: Iterable[HypothesisEntry],
+    day: date,
+    limit: int = TRIAL_BUDGET_PER_QUARTER,
+) -> BudgetState:
+    start, end = quarter_bounds(day)
+    return BudgetState(
+        quarter_start=start,
+        quarter_end=end,
+        used=quarter_trials(entries, day),
+        limit=limit,
+    )
+
+
+def mark_sealed_access(
+    entry: HypothesisEntry,
+    path: Path | str = DEFAULT_JOURNAL_PATH,
+) -> HypothesisEntry:
+    """Record that the sealed period was opened; the entry itself stays immutable."""
+    marked = replace(entry, sealed_access=True)
+    return append_hypothesis(marked, path)

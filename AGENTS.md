@@ -176,6 +176,7 @@ pytest -q                    # все тесты, не только CLEAN_SET
 | `src/backtest/portfolio.py` | мультиинструмент: пул, блочный bootstrap | `pool_trades`, `block_bootstrap`, `summarize`, `build_report`, `leave_one_out_variants` |
 | `src/backtest/dividends.py` | дивидендный календарь: пометка сделок, покрытие | `load_dividends`, `resolve_events`, `find_ex_bar`, `mark_dividend_affected`, `build_coverage` |
 | `src/backtest/verdict.py` | единый вердикт: входы и упорядоченные гейты | `VerdictInputs`, `VerdictThresholds`, `evaluate_verdict`, `render_markdown` |
+| `src/backtest/hypothesis_log.py` | append-only журнал гипотез: попытки из файла, а не из флага | `HypothesisEntry`, `record_attempt`, `trial_count`, `budget_state` |
 | `src/market_data/` | свечи: модели, таймфреймы, PostgreSQL | `Candle`, `Timeframe`, `HistoryManager` |
 | `src/brokers/` | брокер и счета | `AbstractBroker`, `TinkoffSDKBroker`, `BrokerFactory` |
 | `src/trading/orchestrator.py` | путь реального ордера | `TradingOrchestrator.process_signals` |
@@ -241,6 +242,12 @@ pytest -q                    # все тесты, не только CLEAN_SET
 Любая оценка стратегии — walk-forward с OOS-периодами. `oos_pnl` против `in_sample_pnl`
 и `degradation` (oos/is) — обязательные цифры в отчёте. Сейчас у стратегий-образцов
 in-sample положительный, OOS отрицательный: **в live они не включаются**.
+
+**Гипотезы** (ADR-029): число попыток берётся только из `journal/hypotheses.jsonl`
+(append-only), а не из флага. Ячейка heatmap — попытка, `n_trials` — глобально по всем
+идеям, бюджет 20 на квартал. Запечатанный OOS (после `2026-10-01`) не читается без
+`--unseal`; период `2025-10-01…2026-10-01` — разработочный и `works` не даёт.
+Дизайн команды — `docs/EVALUATE_DESIGN.md` (T2-25).
 
 **Heatmap TP/SL** (ADR-021): решение о плато — только по train-окнам walk-forward;
 сетка на всей истории в отчёте помечена «диагностика, не для выбора». Ячейки ниже
@@ -343,7 +350,7 @@ leave-one-out). `n_trials` — информационное поле, попра
 
 ## 9. Состояние проекта
 
-Закрыто: T0 (блокеры запуска), T2-5/T2-6/T2-7/T2-7a/T2-8/T2-17/T2-18/T2-19/T2-20/T2-20a/T2-21/T2-22,
+Закрыто: T0 (блокеры запуска), T2-5/T2-6/T2-7/T2-7a/T2-8/T2-17/T2-18/T2-19/T2-20/T2-20a/T2-21/T2-22/T2-24,
 T3-3/T3-4/T3-5/T3-6/T3-9/T3-10, T4-1/T4-2/T4-5, T5-2/T5-6, T6-1…T6-6/T6-9/T6-10.
 Подробности и цифры — `docs/TASKS.md`, `docs/CHANGELOG.md`.
 
@@ -352,6 +359,7 @@ T3-3/T3-4/T3-5/T3-6/T3-9/T3-10, T4-1/T4-2/T4-5, T5-2/T5-6, T6-1…T6-6/T6-9/T6-1
 | ID | Задача | Зачем |
 |---|---|---|
 | T2-17a | шорт через дивидендную отсечку: сколько списывает брокер | «шорт платит gross» не проверено; ждёт первый реальный случай |
+| T2-25 | `evaluate <strategy>`: идея → вердикт с MDE и поправкой на попытки | главная цель: сразу понять, живая ли идея; дизайн готов |
 | T2-23 | weekend-бары MOEX (доля сделок, гэп через выходные) | с 2025-03 торги выходного дня; MTSS 2025 делит дивидендный гэп |
 | T3-7 | `Trade` / `LiveTrade` → общий `TradeRecord` | две модели сделки расходятся |
 | T2-4 | Alembic + перенос старых данных | ручные миграции |

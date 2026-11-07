@@ -40,6 +40,16 @@
 
 ### Added
 
+- **Журнал гипотез (T2-24, ADR-029):** `journal/hypotheses.jsonl` — append-only журнал
+  попыток, `src/backtest/hypothesis_log.py` — запись, чтение, глобальный счётчик
+  (`n_trials` = сумма `grid_cells` по всем стратегиям и идеям), квартальный бюджет
+  20 попыток, `sealed_access` для запечатанного OOS. `record_attempt()` проверяет
+  бюджет **до** записи и не начинает прогон, который его превысит. Ячейка heatmap
+  считается попыткой. `tests/test_hypothesis_log.py` — 24 теста.
+- **Дизайн `evaluate <strategy>` (T2-25):** `docs/EVALUATE_DESIGN.md` — вход, запрет
+  менять параметры внутри вызова, пять исходов (`rejected` / `underpowered` /
+  `inconclusive` / `fragile` / `works`), MDE, двухступенчатая поправка, запечатанный
+  OOS после `2026-10-01`, секции «Assumptions» и «What would change the verdict».
 - **Общая подготовка свечей (T3-8b, ADR-028):** `src/market_data/preparation.py::prepare_candles()`
   — сортировка по `open_time`, отбрасывание баров с `volume <= 0`, пустой результат при
   нехватке `min_bars`. Вызывается из `BaseStrategy.run()` (бэктест),

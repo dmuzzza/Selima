@@ -157,6 +157,8 @@ p_selima_v8.1/
 │   │   ├── walk_forward.py            [C] окна train/test, отбор параметров на train, OOS-прогон (ADR-015)
 │   │   ├── null_test.py               [C] контроль движка: случайные входы должны терять издержки (ADR-020)
 │   │   ├── heatmap.py                 [C] сетка TP/SL: плато или одна точка, пороги из validation.json (ADR-021)
+│   │   ├── hypothesis_log.py          [C] append-only журнал гипотез: попытки из файла, а не из флага;
+│   │   │                                  grid_cells, квартальный бюджет 20, sealed_access (ADR-029)
 │   │   ├── portfolio.py               [C] мультиинструмент: одно правило, независимые счета, блочный bootstrap (ADR-022)
 │   │   ├── verdict.py                 [C] единый вердикт: входы, упорядоченные гейты, Markdown (ADR-023)
 │   │   └── backtester.py              [L] отдельный движок бэктеста (не используется стратегиями)
@@ -176,6 +178,7 @@ p_selima_v8.1/
 │   ├── test_exit_policy.py            TP/SL: резолв из tp_sl.json, ошибки без дефолтов, хеш конфига
 │   ├── test_null_test.py              null-тест: случайные входы, контроль без издержек, вердикты
 │   ├── test_heatmap.py                heatmap: скоринг в bps, все ветки плато, train-изоляция, отчёты
+│   ├── test_hypothesis_log.py         журнал гипотез: append-only, глобальный счётчик, квартальный бюджет
 │   ├── test_portfolio.py              мультиинструмент: фингерпринты, пул, блоки, гэпы, вердикты
 │   ├── test_verdict.py                вердикт: каждый гейт, порядок групп, флаги, отсутствие входов
 │   ├── test_dividends.py              дивиденды: отсечка после `last_buy_date`, сопоставление с падением,
@@ -217,6 +220,9 @@ p_selima_v8.1/
 ├── archive/                           [L] старый дашборд, web_dashboard, marketdata.db
 ├── data/live_trades.db                SQLite со сделками (в .gitignore)
 ├── logs/                              логи (в .gitignore)
+├── journal/                           [D] append-only журнал гипотез (ADR-029)
+│   ├── hypotheses.jsonl               одна строка JSON на попытку; коммитится
+│   └── README.md                      правила счёта попыток и бюджет
 ├── sdk_t_bank_docs/                   [D] локальная копия документации T-Invest API —
 │   │                                      источник истины по методам, полям и ошибкам
 │   ├── services/                      обзор сервисов (index.mdx) и папки по сервисам
@@ -301,6 +307,7 @@ PostgreSQL (`PgLiveTradeRepository` / `PgStopOrderRepository`). SQLite-репо�
 | `Portfolio` (`portfolio.py`) | runner стратегии, `config/portfolio.json`, `config/costs.json` | `scripts/portfolio_run.py` |
 | `Dividends` (`dividends.py`) | `config/dividends.json`, `config/validation.json` (секция `dividends`), свечи | `portfolio.py`, `scripts/portfolio_run.py`, `scripts/verdict.py` |
 | `Verdict` (`verdict.py`) | `IntervalResult`-входы от `portfolio.py`, `heatmap.py`, `null_test.py`, `config/validation.json` (секция `verdict`) | `scripts/verdict.py` |
+| `HypothesisLog` (`hypothesis_log.py`) | `journal/hypotheses.jsonl` | `scripts/evaluate.py` (T2-25), отчёты |
 | `CostModel` (`costs.py`) | `config/commissions.py`, `config/costs.json` | `TradeSimulator`, `scripts/*` |
 | `StrategyFactory` | `strategy_registry` | scheduler, dashboard |
 | `HistoryManager` | `AbstractBroker`, SQLAlchemy | `DataUpdater`, dashboard, скрипты |

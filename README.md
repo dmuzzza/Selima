@@ -11,7 +11,7 @@
 идемпотентность live-сигналов и восстановление зависших PENDING (T2-5/T2-6),
 walk-forward и OOS (T2-8), null-тест (T2-18), heatmap (T2-19), мультиинструмент
 (T2-20/T2-20a), единый вердикт (T2-21), дивидендный календарь (T2-22),
-CI и защита веток (T2-14/T5-2/T5-6). `pytest` — 387 passed.
+CI и защита веток (T2-14/T5-2/T5-6). `pytest` — 412 passed.
 Репозиторий: `https://github.com/dmuzzza/Selima.git`, рабочая ветка `dev`.
 
 Что ещё не сделано:
@@ -121,6 +121,7 @@ p_selima_v8.1/
 ├── config/                  # instruments.json, costs.json, tp_sl.json, dividends.json, комиссии, лимиты
 ├── src/                     # ядро: brokers, market_data, strategies, trading, ...
 ├── migrations/              # ручные миграции (SQLite legacy + PostgreSQL signal_key)
+├── journal/                 # append-only журнал гипотез (docs/EVALUATE_DESIGN.md)
 ├── scripts/                 # одноразовые утилиты и экспорт
 ├── optimization/            # подбор параметров, ТЗ на ML-оптимизацию
 ├── archive/, debug/         # архив и отладочные скрипты
@@ -169,6 +170,7 @@ p_selima_v8.1/
 | Heatmap TP/SL: плато или одна точка (Markdown + CSV в `debug/`) | `uv run python scripts/heatmap.py --ticker SBER --timeframe 4h --tag t2-19` |
 | Мультиинструмент: одно правило на 20 бумагах (Markdown + CSV + JSON) | `uv run python scripts/portfolio_run.py --tag t2-20` |
 | Единый вердикт: гейты по пулу, holdout, издержкам, плато, null-тесту (Markdown + JSON) | `uv run python scripts/verdict.py --tag t2-21 --n-trials 12` |
+| Журнал гипотез: попытки считаются по файлу, не по флагу | `journal/hypotheses.jsonl`, пишет `src/backtest/hypothesis_log.py`; дизайн — `docs/EVALUATE_DESIGN.md` |
 | Дивиденды: выгрузка календаря из API (ручной запуск, токен из env) | `uv run python scripts/fetch_dividends.py --tickers SBER SNGSP --write` |
 | Чувствительность: прогон без дивидендного календаря | `--no-dividends` в `portfolio_run.py` и `verdict.py` |
 | Чувствительность: издержки ×2 / TP-штраф / уровни от цены исполнения | `--spread-bps 4 --slippage-bps 6`, `--tp-penalty-bps 4`, `--levels-from-fill` |
