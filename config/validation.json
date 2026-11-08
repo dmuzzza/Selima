@@ -1,5 +1,5 @@
 {
-  "version": "4",
+  "version": "5",
   "model_revision": "3",
   "notes": [
     "model_revision: which measurement model produced a report. 1 — no dividend calendar; 2 — trades spanning an ex-dividend bar are marked (T2-22, ADR-025); 3 — entry filter removed and candle preparation shared by the backtest and live (T3-8b, ADR-028): the trade set grew from 929 to 1711, so reports before and after are not comparable. Re-running an old hypothesis on a corrected model is not a new trial, so n_trials stays, but the revision records that the numbers moved.",
@@ -20,10 +20,13 @@
     "verdict.tp_penalty_bps: TP is a limit order and pays no costs in the base model; this adds the penalty as a gate. If the interval at this penalty contains zero, the result is fragile.",
     "verdict.oos_ratio_min_percent: OOS net bps below this share of the full-pool net bps means the result does not survive on data outside the fit window.",
     "verdict.n_trials: declared number of parameter and structure variants tried before this report. Informational for now; it is the input a multiple-testing correction will need.",
-    "dividends.gap_match_ratio: an event is applied only when the ex-bar falls by at least this share of the expected dividend gap (dividend_gross / previous close). 0.3 means 'clearly less than half of the expected drop' - chosen as a sanity floor, not tuned to the sample. A price rise never counts as a match. Events below it are reported as no_gap_match and do not mark trades."
+    "dividends.gap_match_ratio: an event is applied only when the ex-bar falls by at least this share of the expected dividend gap (dividend_gross / previous close). 0.3 means 'clearly less than half of the expected drop' - chosen as a sanity floor, not tuned to the sample. A price rise never counts as a match. Events below it are reported as no_gap_match and do not mark trades.",
+    "min_sample_trades: one floor for every decision that needs a minimum sample: a heatmap cell, a weekend trade group. Kept at the top level so the two checks cannot drift apart; a section may still override it locally (heatmap.min_trades_per_cell, used by the tests and the --min-trades flag).",
+    "weekend.start: MOEX weekend trading began in March 2025. Earlier bars are almost all weekday sessions, so a combined 'with and without weekend bars' total would mix two market regimes. The audit window starts here for every ticker; a ticker whose first weekend bar is later starts at that bar, because the set was expanded at different dates.",
+    "weekend.max_zero_volume_share: a weekend bar with volume == 0 had no trades. Above this share of the ticker's weekend bars in the window the weekend session is structurally unusable and the bars are excluded by a rule, not by the resulting net. 0.10 is a floor for 'the session trades', fixed before the run (ADR-031). The weekday-versus-weekend ratio is printed for information and is not decisive."
   ],
+  "min_sample_trades": 30,
   "heatmap": {
-    "min_trades_per_cell": 30,
     "plateau_margin_percent": 20.0,
     "plateau_share": 0.65,
     "min_neighbours_evaluated": 3
@@ -50,5 +53,9 @@
   "dividends": {
     "gap_match_ratio": 0.3,
     "t1_settlement_switch": "2023-07-31"
+  },
+  "weekend": {
+    "start": "2025-03-01",
+    "max_zero_volume_share": 0.1
   }
 }

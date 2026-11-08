@@ -87,6 +87,11 @@ def load_thresholds(path: str | Path) -> HeatmapThresholds:
 
     The fingerprint is `<version>+<sha256[:12]>` of the file, the same convention
     as `config/tp_sl.json` and `config/costs.json`.
+
+    The minimum sample floor lives at the top level (`min_sample_trades`) so the
+    heatmap cell and the weekend trade group share one number. A section-level
+    `min_trades_per_cell` still wins when present: the tests and the `--min-trades`
+    flag set it locally.
     """
     raw = Path(path).read_bytes()
     payload = json.loads(raw)
@@ -97,8 +102,11 @@ def load_thresholds(path: str | Path) -> HeatmapThresholds:
     if not version:
         raise ValueError(f"{path}: missing 'version'")
     digest = hashlib.sha256(raw).hexdigest()[:12]
+    floor = section.get("min_trades_per_cell", payload.get("min_sample_trades"))
+    if floor is None:
+        raise ValueError(f"{path}: missing 'min_sample_trades'")
     return HeatmapThresholds(
-        min_trades_per_cell=int(section["min_trades_per_cell"]),
+        min_trades_per_cell=int(floor),
         plateau_margin_percent=float(section["plateau_margin_percent"]),
         plateau_share=float(section["plateau_share"]),
         min_neighbours_evaluated=int(
