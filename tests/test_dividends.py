@@ -7,8 +7,10 @@ import pytest
 
 from src.backtest.dividends import (
     APPLIED,
-    NO_CANDLES,
+    FUTURE,
     NO_GAP_MATCH,
+    NOT_PAID,
+    OUT_OF_HISTORY,
     DividendCalendar,
     DividendEvent,
     build_coverage,
@@ -159,11 +161,29 @@ def test_small_drop_is_rejected_as_no_gap_match():
     assert "ratio" in resolved.reason
 
 
-def test_event_without_candles_is_reported_not_dropped():
+def test_event_after_the_last_candle_is_future_not_dropped():
+    """A declared future payout is kept: live needs the ex-date before it happens."""
     event = DividendEvent("SBER", date(2030, 1, 1), 10.0)
     resolved = resolve_event(event, sber_like_candles())
-    assert resolved.status == NO_CANDLES
+    assert resolved.status == FUTURE
     assert resolved.ex_bar_open is None
+    assert "no candle" in resolved.reason
+
+
+def test_event_before_the_first_candle_is_out_of_history():
+    """Comparing it with the first bars would invent a gap at the start of history."""
+    event = DividendEvent("SBER", date(2019, 1, 1), 10.0)
+    resolved = resolve_event(event, sber_like_candles())
+    assert resolved.status == OUT_OF_HISTORY
+    assert resolved.ex_bar_open is None
+
+
+def test_declared_but_not_paid_event_never_marks_a_trade():
+    """GAZP 2022-10-10: the meeting voted the payout down, no gap must be expected."""
+    event = DividendEvent("SBER", date(2024, 7, 10), 33.3, status="not_paid")
+    resolved = resolve_event(event, sber_like_candles())
+    assert resolved.status == NOT_PAID
+    assert "not paid" in resolved.reason
 
 
 def test_gap_match_ratio_must_be_positive():
@@ -348,6 +368,81 @@ def test_unknown_source_is_refused(tmp_path):
     path.write_text(json.dumps(payload), encoding="utf-8")
     clear_dividends_cache()
     with pytest.raises(ValueError, match="source"):
+        load_dividends(path)
+
+
+def test_payouts_split_is_parsed_and_must_sum_to_the_total(tmp_path):
+    """Two payouts on one ex-date: CHMF 2024-06-17 is 191.51 + 38.30."""
+    event = {
+        "ticker": "CHMF",
+        "last_buy_date": "2024-06-17",
+        "dividend_gross": 229.81,
+        "source": "api",
+        "payouts": [
+            {"dividend_gross": 191.51, "record_date": "2024-06-18"},
+            {"dividend_gross": 38.3, "record_date": "2024-06-18"},
+        ],
+    }
+    path = tmp_path / "dividends.json"
+    path.write_text(json.dumps({"version": "3", "events": [event]}), encoding="utf-8")
+    clear_dividends_cache()
+    parsed = load_dividends(path).events[0]
+    assert parsed.dividend_gross == pytest.approx(229.81)
+    assert parsed.payouts == pytest.approx((191.51, 38.3))
+
+    event["dividend_gross"] = 200.0
+    path.write_text(json.dumps({"version": "3", "events": [event]}), encoding="utf-8")
+    clear_dividends_cache()
+    with pytest.raises(ValueError, match="does not match"):
+        load_dividends(path)
+
+
+def test_annotations_layer_survives_and_applies_status(tmp_path):
+    """The hand-written layer is separate from the API rows, so a rewrite keeps it."""
+    payload = {
+        "version": "3",
+        "annotations": {
+            "GAZP|2022-10-10": {
+                "status": "not_paid",
+                "note": "the meeting on 2022-09-30 voted the payout down",
+                "reference": "company release 2022-09-30",
+            }
+        },
+        "events": [
+            {
+                "ticker": "GAZP",
+                "last_buy_date": "2022-10-10",
+                "dividend_gross": 51.03,
+                "source": "api",
+            }
+        ],
+    }
+    path = tmp_path / "dividends.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    clear_dividends_cache()
+    event = load_dividends(path).events[0]
+    assert event.status == "not_paid"
+    assert event.note and "voted" in event.note
+    assert event.reference
+
+
+def test_unknown_event_status_is_refused(tmp_path):
+    payload = {
+        "version": "3",
+        "events": [
+            {
+                "ticker": "SBER",
+                "last_buy_date": "2024-07-10",
+                "dividend_gross": 33.3,
+                "source": "api",
+                "status": "maybe",
+            }
+        ],
+    }
+    path = tmp_path / "dividends.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    clear_dividends_cache()
+    with pytest.raises(ValueError, match="status"):
         load_dividends(path)
 
 

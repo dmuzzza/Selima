@@ -44,8 +44,13 @@ APPLIED = "applied"
 NO_GAP_MATCH = "no_gap_match"
 NO_CANDLES = "no_candles"
 NO_PREV_CLOSE = "no_prev_close"
+OUT_OF_HISTORY = "out_of_history"
+FUTURE = "future"
+NOT_PAID = "not_paid"
 
 VALID_SOURCES = frozenset({"api", "manual"})
+# Declared but not paid (a meeting voted the payout down) and paid events.
+VALID_STATUSES = frozenset({"active", "not_paid"})
 
 
 # ── configuration ──────────────────────────────────────────────────────────
@@ -53,7 +58,16 @@ VALID_SOURCES = frozenset({"api", "manual"})
 
 @dataclass(frozen=True)
 class DividendEvent:
-    """One declared payment: the amount per share and the last day to buy it."""
+    """One declared payment: the amount per share and the last day to buy it.
+
+    `payouts` keeps the individual amounts when two payouts share one ex-date
+    (for example CHMF 2024-06-17: 191.51 for 2023 and 38.30 for Q1 2024). The
+    total is `dividend_gross`; the split is kept for tracing, not for the gap
+    check, which compares the total with the observed drop.
+
+    `status` is `active` for a paid event and `not_paid` for a declared payout
+    that shareholders rejected: the API returns it, the market never paid it.
+    """
 
     ticker: str
     last_buy_date: date
@@ -61,6 +75,9 @@ class DividendEvent:
     source: str = "api"
     record_date: date | None = None
     reference: str | None = None
+    status: str = "active"
+    payouts: tuple[float, ...] = ()
+    note: str | None = None
 
     def describe(self) -> dict:
         return {
@@ -98,8 +115,23 @@ class DividendCalendar:
         }
 
 
-def _parse_event(raw: Mapping[str, object], path: Path, index: int) -> DividendEvent:
+def _parse_event(
+    raw: Mapping[str, object],
+    path: Path,
+    index: int,
+    annotations: Mapping[str, Mapping[str, object]] | None = None,
+) -> DividendEvent:
     where = f"{path}: events[{index}]"
+    merged = dict(raw)
+    # The `annotations` layer is the hand-written part that survives a rewrite by
+    # scripts/fetch_dividends.py; it is keyed by "TICKER|last_buy_date".
+    key = f"{str(raw.get('ticker') or '').strip().upper()}|{raw.get('last_buy_date')}"
+    annotation = (annotations or {}).get(key) or {}
+    for field in ("status", "note", "reference"):
+        if annotation.get(field) and not merged.get(field):
+            merged[field] = annotation[field]
+    raw = merged
+
     ticker = str(raw.get("ticker") or "").strip().upper()
     if not ticker:
         raise ValueError(f"{where}: missing 'ticker'")
@@ -137,6 +169,29 @@ def _parse_event(raw: Mapping[str, object], path: Path, index: int) -> DividendE
         except ValueError as exc:
             raise ValueError(f"{where}: bad 'record_date' {record_raw!r}") from exc
 
+    status = str(raw.get("status") or "active").strip().lower()
+    if status not in VALID_STATUSES:
+        raise ValueError(f"{where}: 'status' must be one of {sorted(VALID_STATUSES)}")
+
+    payouts: tuple[float, ...] = ()
+    payouts_raw = raw.get("payouts")
+    if payouts_raw:
+        if not isinstance(payouts_raw, list):
+            raise ValueError(f"{where}: 'payouts' must be a list")
+        try:
+            amounts = tuple(float(item["dividend_gross"]) for item in payouts_raw)  # type: ignore[index]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"{where}: bad 'payouts' entry") from exc
+        if any(amount <= 0 for amount in amounts):
+            raise ValueError(f"{where}: every 'payouts' amount must be positive")
+        if abs(sum(amounts) - dividend_gross) > 1e-6:
+            raise ValueError(
+                f"{where}: 'payouts' sum {sum(amounts)} does not match "
+                f"'dividend_gross' {dividend_gross}"
+            )
+        payouts = amounts
+
+    note = raw.get("note")
     return DividendEvent(
         ticker=ticker,
         last_buy_date=last_buy_date,
@@ -144,6 +199,9 @@ def _parse_event(raw: Mapping[str, object], path: Path, index: int) -> DividendE
         source=source,
         record_date=record_date,
         reference=str(reference) if reference else None,
+        status=status,
+        payouts=payouts,
+        note=str(note) if note else None,
     )
 
 
@@ -173,8 +231,18 @@ def load_dividends(path: Path | str = DEFAULT_DIVIDENDS_PATH) -> DividendCalenda
     if not isinstance(entries, list):
         raise ValueError(f"{resolved} must contain an 'events' array")
 
+    raw_annotations = data.get("annotations") or {}
+    if not isinstance(raw_annotations, dict):
+        raise ValueError(f"{resolved}: 'annotations' must be an object")
+    annotations: dict[str, Mapping[str, object]] = {
+        str(key): value
+        for key, value in raw_annotations.items()
+        if isinstance(value, Mapping)
+    }
+
     events = tuple(
-        _parse_event(entry, resolved, index) for index, entry in enumerate(entries)
+        _parse_event(entry, resolved, index, annotations)
+        for index, entry in enumerate(entries)
     )
 
     # Fingerprint the payload, not the bytes: reformatting must not change the
@@ -291,6 +359,12 @@ class ResolvedDividend:
     @property
     def reason(self) -> str:
         """Why the event was accepted or rejected, in one line."""
+        if self.status == NOT_PAID:
+            return "declared payout was not paid (shareholders voted it down)"
+        if self.status == OUT_OF_HISTORY:
+            return "event is before the first loaded candle"
+        if self.status == FUTURE:
+            return "no candle after last_buy_date yet"
         if self.status == NO_CANDLES:
             return "no candle after last_buy_date"
         if self.status == NO_PREV_CLOSE:
@@ -363,6 +437,44 @@ def resolve_event(
     """Place one event on a bar and decide whether the price actually dropped."""
     if gap_match_ratio <= 0:
         raise ValueError("gap_match_ratio must be positive")
+
+    ordered = ordered_candles(candles)
+    if event.status == "not_paid":
+        return ResolvedDividend(
+            ticker=event.ticker,
+            last_buy_date=event.last_buy_date,
+            dividend_gross=event.dividend_gross,
+            status=NOT_PAID,
+            source=event.source,
+        )
+    if not ordered:
+        return ResolvedDividend(
+            ticker=event.ticker,
+            last_buy_date=event.last_buy_date,
+            dividend_gross=event.dividend_gross,
+            status=NO_CANDLES,
+            source=event.source,
+        )
+    # An event before the first loaded bar cannot be checked: comparing it with the
+    # first bars would invent a gap that belongs to the start of the history.
+    if event.last_buy_date < ordered[0].open_time.date():
+        return ResolvedDividend(
+            ticker=event.ticker,
+            last_buy_date=event.last_buy_date,
+            dividend_gross=event.dividend_gross,
+            status=OUT_OF_HISTORY,
+            source=event.source,
+        )
+    # No bar after the ex-date yet: the event is known (it matters for live shorts)
+    # but cannot be measured.
+    if event.last_buy_date >= ordered[-1].open_time.date():
+        return ResolvedDividend(
+            ticker=event.ticker,
+            last_buy_date=event.last_buy_date,
+            dividend_gross=event.dividend_gross,
+            status=FUTURE,
+            source=event.source,
+        )
 
     found = find_ex_bar(candles, event.last_buy_date)
     if found is None:
@@ -489,6 +601,9 @@ class DividendCoverage:
     other: int
     unexplained_gaps: tuple[UnexplainedGap, ...]
     rejected_events: tuple[ResolvedDividend, ...] = ()
+    future: int = 0
+    out_of_history: int = 0
+    not_paid: int = 0
 
     def describe(self) -> dict:
         return {
@@ -499,6 +614,9 @@ class DividendCoverage:
             "applied": self.applied,
             "no_gap_match": self.no_gap_match,
             "other": self.other,
+            "future": self.future,
+            "out_of_history": self.out_of_history,
+            "not_paid": self.not_paid,
             "rejected_events": [item.describe() for item in self.rejected_events],
             "unexplained_gaps": [gap.describe() for gap in self.unexplained_gaps],
         }
@@ -554,6 +672,9 @@ def build_coverage(
     applied = sum(1 for item in resolved if item.status == APPLIED)
     no_gap_match = sum(1 for item in resolved if item.status == NO_GAP_MATCH)
     other = len(resolved) - applied - no_gap_match
+    future = sum(1 for item in resolved if item.status == FUTURE)
+    out_of_history = sum(1 for item in resolved if item.status == OUT_OF_HISTORY)
+    not_paid = sum(1 for item in resolved if item.status == NOT_PAID)
 
     return DividendCoverage(
         years=known_years,
@@ -563,5 +684,14 @@ def build_coverage(
         no_gap_match=no_gap_match,
         other=other,
         unexplained_gaps=tuple(unexplained),
-        rejected_events=tuple(item for item in resolved if item.status != APPLIED),
+        # `future` and `out_of_history` are reported separately: they were never
+        # evaluated, so they are not "rejected" events.
+        rejected_events=tuple(
+            item
+            for item in resolved
+            if item.status in (NO_GAP_MATCH, NO_CANDLES, NO_PREV_CLOSE)
+        ),
+        future=future,
+        out_of_history=out_of_history,
+        not_paid=not_paid,
     )

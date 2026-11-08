@@ -26,6 +26,7 @@ and the installed SDK 1.51.0):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -83,6 +84,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--write", action="store_true", help="update the config file instead of printing"
     )
     parser.add_argument("--out", default=str(DIVIDENDS_PATH))
+    parser.add_argument(
+        "--raw-out",
+        default=str(ROOT / "debug" / "dividends_raw.json"),
+        help="raw API reply with its hash, for auditing the merge",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args(argv)
 
@@ -152,6 +158,79 @@ def fetch(tickers: dict[str, str], date_from: date, date_to: date) -> list[dict]
     return events
 
 
+def merge_payouts(events: list[dict]) -> list[dict]:
+    """Collapse events that share `(ticker, last_buy_date)` into one payment day.
+
+    The API returns two separate dividends when two payouts have the same ex-date:
+    CHMF 2024-06-17 is 191.51 for 2023 plus 38.30 for Q1 2024, LKOH 2022-12-20 is
+    537.0 for 2021 plus 256.0 for 9M 2022. They are one ex-date and must not be
+    counted twice, so `dividend_gross` becomes the sum and the split stays in
+    `payouts` for tracing.
+
+    The merge is deterministic: the same API reply always gives the same file,
+    which is what makes a repeated `--write` a no-op.
+    """
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    for event in events:
+        key = (str(event["ticker"]).upper(), str(event["last_buy_date"]))
+        grouped.setdefault(key, []).append(event)
+
+    merged: list[dict] = []
+    for (ticker, last_buy), items in sorted(grouped.items()):
+        items.sort(
+            key=lambda item: (
+                -float(item["dividend_gross"]),
+                str(item.get("record_date") or ""),
+            )
+        )
+        total = round(sum(float(item["dividend_gross"]) for item in items), 6)
+        record_dates = sorted(
+            str(item["record_date"]) for item in items if item.get("record_date")
+        )
+        entry: dict = {
+            "ticker": ticker,
+            "record_date": record_dates[-1] if record_dates else None,
+            "last_buy_date": last_buy,
+            "dividend_gross": total,
+            "source": "api",
+        }
+        if len(items) > 1:
+            entry["payouts"] = [
+                {
+                    "dividend_gross": round(float(item["dividend_gross"]), 6),
+                    "record_date": item.get("record_date"),
+                }
+                for item in items
+            ]
+        merged.append(entry)
+    return merged
+
+
+def raw_fingerprint(events: list[dict]) -> dict:
+    """Count and hash of the raw API reply, so a merge can be audited later."""
+    canonical = json.dumps(
+        sorted(
+            events,
+            key=lambda item: (
+                str(item["ticker"]),
+                str(item["last_buy_date"]),
+                float(item["dividend_gross"]),
+            ),
+        ),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    per_ticker: dict[str, int] = {}
+    for event in events:
+        ticker = str(event["ticker"]).upper()
+        per_ticker[ticker] = per_ticker.get(ticker, 0) + 1
+    return {
+        "count": len(events),
+        "sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        "per_ticker": dict(sorted(per_ticker.items())),
+    }
+
+
 def merge_manual(existing: dict, fetched: list[dict]) -> list[dict]:
     """Keep hand-checked events; API events replace API events."""
     manual = [
@@ -181,7 +260,22 @@ def main(argv: list[str] | None = None) -> int:
 
     date_from = date.fromisoformat(args.date_from)
     date_to = date.fromisoformat(args.date_to)
-    fetched = fetch(subset, date_from, date_to)
+    raw_events = fetch(subset, date_from, date_to)
+    fingerprint = raw_fingerprint(raw_events)
+    fetched = merge_payouts(raw_events)
+
+    raw_out = Path(args.raw_out)
+    raw_out.parent.mkdir(parents=True, exist_ok=True)
+    raw_out.write_text(
+        json.dumps(
+            {**fingerprint, "raw_events": raw_events},
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
 
     out = Path(args.out)
     existing = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
@@ -190,18 +284,29 @@ def main(argv: list[str] | None = None) -> int:
     payload = {
         "version": existing.get("version", "1"),
         "notes": existing.get("notes", []),
+        # Hand-written layer: status, note and reference survive a rewrite.
+        "annotations": existing.get("annotations", {}),
         "events": events,
     }
     if not args.write:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
-        print(f"# fetched {len(fetched)} events; rerun with --write to update {out}")
+        print(
+            f"# fetched {fingerprint['count']} raw events -> {len(fetched)} payment days "
+            f"(sha256 {fingerprint['sha256'][:12]}); rerun with --write to update {out}"
+        )
         return 0
 
     out.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
     )
     manual = sum(1 for event in events if event.get("source") == "manual")
-    print(f"wrote {len(events)} events ({len(fetched)} api, {manual} manual) to {out}")
+    print(
+        f"wrote {len(events)} events ({len(fetched)} api payment days from "
+        f"{fingerprint['count']} raw, {manual} manual) to {out}"
+    )
+    print(f"raw reply: {raw_out} (sha256 {fingerprint['sha256'][:12]})")
     print("bump `version` in the file if the model changed, not only the data")
     return 0
 

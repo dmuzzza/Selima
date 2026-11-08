@@ -1079,6 +1079,14 @@ def render_markdown(report: PortfolioReport) -> str:
         other = coverage.get("other", 0)
         if other:
             lines.append(f"- **events unresolved (no candles / no previous close)**: {other}")
+        for key, label in (
+            ("future", "future (ex-date after the last candle, kept for live)"),
+            ("out_of_history", "out of history (before the first candle)"),
+            ("not_paid", "declared but not paid"),
+        ):
+            count = coverage.get(key, 0)
+            if count:
+                lines.append(f"- **events {label}**: {count}")
         missing = coverage.get("missing_years") or {}
         if missing:
             known_years = coverage.get("years") or []
@@ -1094,11 +1102,14 @@ def render_markdown(report: PortfolioReport) -> str:
             }
             if uncovered:
                 lines.append(
-                    f"- **no events at all** ({len(uncovered)}): " + ", ".join(uncovered)
+                    f"- **no events at all, unconfirmed ({len(uncovered)})**: "
+                    + ", ".join(uncovered)
+                    + " — the API returned nothing and no independent source was checked, "
+                    "so this is not proof that no dividend was paid"
                 )
             for ticker, years in partial.items():
                 lines.append(
-                    f"- **{ticker} without events**: {_format_years(years)}"
+                    f"- **{ticker} years unconfirmed**: {_format_years(years)}"
                 )
         else:
             lines.append("- **years without events**: none")

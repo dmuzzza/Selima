@@ -77,7 +77,8 @@ p_selima_v8.1/
 │   ├── commissions.py                 [C] комиссии: 0.05% за операцию, маржинальные брекеты
 │   ├── costs.json                     [C] издержки бэктеста по инструментам: спред/проскальзывание (ADR-016)
 │   ├── dividends.json                 [C] дивидендный календарь: `last_buy_date`, `dividend_gross`,
-│   │                                      `source: api|manual`; version + sha256 (ADR-025)
+│   │                                      `payouts` (слитые выплаты), `annotations` (status/note/
+│   │                                      reference), `source: api|manual`; version + sha256 (ADR-025)
 │   └── tp_sl.json                     [C] TP/SL по стратегиям + version/sha256; нет ключа — ошибка (ADR-019)
 │
 ├── src/
@@ -151,9 +152,9 @@ p_selima_v8.1/
 │   │   │                                  TP/SL из config/tp_sl.json, MissingExitPolicyError (ADR-019)
 │   │   ├── costs.py                   [C] CostModel: спред (½ на сторону), проскальзывание,
 │   │   │                                  tp_penalty (чувствительность), метки GROSS/NET (ADR-016)
-│   │   ├── dividends.py               [C] дивидендный календарь: отсечка = первый бар строго
-│   │   │                                  после `last_buy_date`, сопоставление с падением,
-│   │   │                                  пометка `dividend_affected`, покрытие (ADR-025)
+│   │   ├── dividends.py               [C] дивидендный календарь: отсечка по `last_buy_date`,
+│   │   │                                  сопоставление с падением, статусы applied/no_gap_match/
+│   │   │                                  not_paid/future/out_of_history, покрытие (ADR-025)
 │   │   ├── walk_forward.py            [C] окна train/test, отбор параметров на train, OOS-прогон (ADR-015)
 │   │   ├── null_test.py               [C] контроль движка: случайные входы должны терять издержки (ADR-020)
 │   │   ├── heatmap.py                 [C] сетка TP/SL: плато или одна точка, пороги из validation.json (ADR-021)
@@ -181,8 +182,10 @@ p_selima_v8.1/
 │   ├── test_hypothesis_log.py         журнал гипотез: append-only, глобальный счётчик, квартальный бюджет
 │   ├── test_portfolio.py              мультиинструмент: фингерпринты, пул, блоки, гэпы, вердикты
 │   ├── test_verdict.py                вердикт: каждый гейт, порядок групп, флаги, отсутствие входов
-│   ├── test_dividends.py              дивиденды: отсечка после `last_buy_date`, сопоставление с падением,
-│   │                                  пометка, покрытие, sha256, ручные записи без reference
+│   ├── test_dividends.py              дивиденды: отсечка по `last_buy_date`, сопоставление с падением,
+│   │                                  статусы not_paid/future/out_of_history, покрытие, sha256,
+│   │                                  `payouts`, слой `annotations`, ручные записи без reference
+│   ├── test_fetch_dividends.py        слияние выплат с одной экс-датой, детерминизм, отпечаток сырого ответа
 │   ├── test_strategy_stats.py         StrategyStats: две базы доходности, engaged-капитал, деление на ноль
 │   ├── test_sharpe_zscore.py          Sharpe/Z-score: порядок реализации, окно, пороги и причины None
 │   ├── test_scheduler_signal_lookup.py один вызов detect_signals за цикл обработки инструмента
@@ -212,7 +215,8 @@ p_selima_v8.1/
 │                                          null_test.py (случайные входы против издержек, ADR-020),
 │                                          heatmap.py (сетка TP/SL: плато, Markdown + CSV, ADR-021),
 │                                          portfolio_run.py (мультиинструмент: пул, блочный bootstrap, ADR-022),
-│                                          fetch_dividends.py (выгрузка дивидендов со сверкой FIGI, ADR-025),
+│                                          fetch_dividends.py (выгрузка дивидендов: сверка FIGI, слияние
+│                                          выплат с одной экс-датой, слой annotations, ADR-025),
 │                                          verdict.py (единый вердикт: сборка входов, Markdown + JSON, ADR-023)
 ├── optimization/                      [T] grid_tp_sl_dual_ma.py, optimize_macd_plus.py,
 │                                          _check_db.py, tz_ml_optimization.md (ТЗ на ML)
@@ -391,15 +395,20 @@ PnL считается тремя слоями: `pnl_price` (сырые цены
 
 | Правило | Значение |
 |---|---|
-| отсечка (ex-бар) | первый торговый бар строго после `last_buy_date`; weekend-бары участвуют |
+| отсечка (ex-бар) | первый торговый бар строго после `last_buy_date`; weekend-бары участвуют (правило уточняется в ADR-030) |
 | пометка | `entry_time < ex_bar_open <= exit_time` (то же окно, что у `gap_affected`) |
 | применение события | падение на ex-баре ≥ `gap_match_ratio` (0.3) от `dividend_gross / prev_close`; рост не считается никогда |
 | иначе | `no_gap_match`: событие печатается с причиной, сделки не помечаются |
+| `status: not_paid` | объявленная, но не выплаченная сумма (GAZP 2022-10-10) — сделок не помечает |
+| `future` / `out_of_history` | вычисляются из свечей, в файле не хранятся: экс-дата после последней свечи / до первой |
+| слияние выплат | одна экс-дата = одно событие: `dividend_gross` — сумма, `payouts` — разбивка |
 | `dividend_net` в API | по факту **gross**: SBER 2024 вернул 33.30 при объявленных 33.30 ₽ |
 
 Набор сделок обязан совпадать с календарём и без него. Отчёт печатает варианты «без
 dividend-affected» и «без gap- или dividend-affected» рядом с обычными итогами, плюс
-покрытие: тикеры и годы без событий, гэпы >5%, которые календарь не объясняет.
+покрытие: тикеры и годы, для которых API не вернул событий (**unconfirmed**, не «нет
+выплат»), события `future` / `out_of_history` / `not_paid` отдельными строками и гэпы
+>5%, которые календарь не объясняет.
 
 ---
 

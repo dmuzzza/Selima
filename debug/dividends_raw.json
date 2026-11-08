@@ -1,0 +1,1148 @@
+{
+  "count": 160,
+  "sha256": "db45e5c6075da337cefddf99ab89a69288aca840a94d3bb13cab16751b5f7419",
+  "per_ticker": {
+    "AFLT": 2,
+    "ALRS": 6,
+    "CHMF": 12,
+    "GAZP": 3,
+    "GMKN": 7,
+    "IRAO": 7,
+    "LKOH": 14,
+    "MAGN": 10,
+    "MGNT": 7,
+    "MOEX": 6,
+    "MTSS": 10,
+    "NLMK": 10,
+    "NVTK": 14,
+    "PIKK": 3,
+    "RTKM": 7,
+    "SBER": 6,
+    "SNGSP": 7,
+    "TATN": 18,
+    "TRNFP": 7,
+    "VTBR": 4
+  },
+  "raw_events": [
+    {
+      "ticker": "AFLT",
+      "record_date": "2026-07-17",
+      "last_buy_date": "2026-07-16",
+      "dividend_gross": 5.29,
+      "source": "api"
+    },
+    {
+      "ticker": "AFLT",
+      "record_date": "2025-07-18",
+      "last_buy_date": "2025-07-17",
+      "dividend_gross": 5.27,
+      "source": "api"
+    },
+    {
+      "ticker": "ALRS",
+      "record_date": "2024-10-19",
+      "last_buy_date": "2024-10-17",
+      "dividend_gross": 2.49,
+      "source": "api"
+    },
+    {
+      "ticker": "ALRS",
+      "record_date": "2024-05-31",
+      "last_buy_date": "2024-05-30",
+      "dividend_gross": 2.02,
+      "source": "api"
+    },
+    {
+      "ticker": "ALRS",
+      "record_date": "2023-10-18",
+      "last_buy_date": "2023-10-17",
+      "dividend_gross": 3.77,
+      "source": "api"
+    },
+    {
+      "ticker": "ALRS",
+      "record_date": "2021-10-19",
+      "last_buy_date": "2021-10-18",
+      "dividend_gross": 8.79,
+      "source": "api"
+    },
+    {
+      "ticker": "ALRS",
+      "record_date": "2021-07-04",
+      "last_buy_date": "2021-07-01",
+      "dividend_gross": 9.54,
+      "source": "api"
+    },
+    {
+      "ticker": "ALRS",
+      "record_date": "2020-07-13",
+      "last_buy_date": "2020-07-10",
+      "dividend_gross": 2.63,
+      "source": "api"
+    },
+    {
+      "ticker": "CHMF",
+      "record_date": "2024-12-17",
+      "last_buy_date": "2024-12-16",
+      "dividend_gross": 49.06,
+      "source": "api"
+    },
+    {
+      "ticker": "CHMF",
+      "record_date": "2024-09-10",
+      "last_buy_date": "2024-09-09",
+      "dividend_gross": 31.06,
+      "source": "api"
+    },
+    {
+      "ticker": "CHMF",
+      "record_date": "2024-06-18",
+      "last_buy_date": "2024-06-17",
+      "dividend_gross": 191.51,
+      "source": "api"
+    },
+    {
+      "ticker": "CHMF",
+      "record_date": "2024-06-18",
+      "last_buy_date": "2024-06-17",
+      "dividend_gross": 38.3,
+      "source": "api"
+    },
+    {
+      "ticker": "CHMF",
+      "record_date": "2021-12-14",
+      "last_buy_date": "2021-12-13",
+      "dividend_gross": 85.93,
+      "source": "api"
+    },
+    {
+      "ticker": "CHMF",
+      "record_date": "2021-09-02",
+      "last_buy_date": "2021-09-01",
+      "dividend_gross": 84.45,
+      "source": "api"
+    },
+    {
+      "ticker": "CHMF",
+      "record_date": "2021-06-01",
+      "last_buy_date": "2021-05-31",
+      "dividend_gross": 46.77,
+      "source": "api"
+    },
+    {
+      "ticker": "CHMF",
+      "record_date": "2021-06-01",
+      "last_buy_date": "2021-05-31",
+      "dividend_gross": 36.27,
+      "source": "api"
+    },
+    {
+      "ticker": "CHMF",
+      "record_date": "2020-12-08",
+      "last_buy_date": "2020-12-07",
+      "dividend_gross": 37.34,
+      "source": "api"
+    },
+    {
+      "ticker": "CHMF",
+      "record_date": "2020-09-08",
+      "last_buy_date": "2020-09-07",
+      "dividend_gross": 15.44,
+      "source": "api"
+    },
+    {
+      "ticker": "CHMF",
+      "record_date": "2020-06-16",
+      "last_buy_date": "2020-06-15",
+      "dividend_gross": 27.35,
+      "source": "api"
+    },
+    {
+      "ticker": "CHMF",
+      "record_date": "2020-06-16",
+      "last_buy_date": "2020-06-15",
+      "dividend_gross": 26.26,
+      "source": "api"
+    },
+    {
+      "ticker": "GAZP",
+      "record_date": "2022-10-11",
+      "last_buy_date": "2022-10-10",
+      "dividend_gross": 51.03,
+      "source": "api"
+    },
+    {
+      "ticker": "GAZP",
+      "record_date": "2021-07-15",
+      "last_buy_date": "2021-07-14",
+      "dividend_gross": 12.55,
+      "source": "api"
+    },
+    {
+      "ticker": "GAZP",
+      "record_date": "2020-07-16",
+      "last_buy_date": "2020-07-15",
+      "dividend_gross": 15.24,
+      "source": "api"
+    },
+    {
+      "ticker": "GMKN",
+      "record_date": "2026-10-12",
+      "last_buy_date": "2026-10-09",
+      "dividend_gross": 1.85,
+      "source": "api"
+    },
+    {
+      "ticker": "GMKN",
+      "record_date": "2023-12-26",
+      "last_buy_date": "2023-12-25",
+      "dividend_gross": 9.1533,
+      "source": "api"
+    },
+    {
+      "ticker": "GMKN",
+      "record_date": "2022-06-14",
+      "last_buy_date": "2022-06-13",
+      "dividend_gross": 11.6622,
+      "source": "api"
+    },
+    {
+      "ticker": "GMKN",
+      "record_date": "2022-01-14",
+      "last_buy_date": "2022-01-13",
+      "dividend_gross": 15.2317,
+      "source": "api"
+    },
+    {
+      "ticker": "GMKN",
+      "record_date": "2021-06-01",
+      "last_buy_date": "2021-05-31",
+      "dividend_gross": 10.2122,
+      "source": "api"
+    },
+    {
+      "ticker": "GMKN",
+      "record_date": "2020-12-24",
+      "last_buy_date": "2020-12-23",
+      "dividend_gross": 6.2335,
+      "source": "api"
+    },
+    {
+      "ticker": "GMKN",
+      "record_date": "2020-05-25",
+      "last_buy_date": "2020-05-22",
+      "dividend_gross": 5.572,
+      "source": "api"
+    },
+    {
+      "ticker": "IRAO",
+      "record_date": "2026-06-09",
+      "last_buy_date": "2026-06-08",
+      "dividend_gross": 0.321425,
+      "source": "api"
+    },
+    {
+      "ticker": "IRAO",
+      "record_date": "2025-06-09",
+      "last_buy_date": "2025-06-06",
+      "dividend_gross": 0.353757,
+      "source": "api"
+    },
+    {
+      "ticker": "IRAO",
+      "record_date": "2024-06-03",
+      "last_buy_date": "2024-05-31",
+      "dividend_gross": 0.325999,
+      "source": "api"
+    },
+    {
+      "ticker": "IRAO",
+      "record_date": "2023-05-30",
+      "last_buy_date": "2023-05-29",
+      "dividend_gross": 0.283655,
+      "source": "api"
+    },
+    {
+      "ticker": "IRAO",
+      "record_date": "2022-06-10",
+      "last_buy_date": "2022-06-09",
+      "dividend_gross": 0.236584,
+      "source": "api"
+    },
+    {
+      "ticker": "IRAO",
+      "record_date": "2021-06-07",
+      "last_buy_date": "2021-06-04",
+      "dividend_gross": 0.180711,
+      "source": "api"
+    },
+    {
+      "ticker": "IRAO",
+      "record_date": "2020-06-01",
+      "last_buy_date": "2020-05-29",
+      "dividend_gross": 0.196193,
+      "source": "api"
+    },
+    {
+      "ticker": "LKOH",
+      "record_date": "2026-12-09",
+      "last_buy_date": "2026-12-08",
+      "dividend_gross": 535.0,
+      "source": "api"
+    },
+    {
+      "ticker": "LKOH",
+      "record_date": "2026-05-04",
+      "last_buy_date": "2026-04-30",
+      "dividend_gross": 278.0,
+      "source": "api"
+    },
+    {
+      "ticker": "LKOH",
+      "record_date": "2026-01-12",
+      "last_buy_date": "2026-01-09",
+      "dividend_gross": 397.0,
+      "source": "api"
+    },
+    {
+      "ticker": "LKOH",
+      "record_date": "2025-06-03",
+      "last_buy_date": "2025-06-02",
+      "dividend_gross": 541.0,
+      "source": "api"
+    },
+    {
+      "ticker": "LKOH",
+      "record_date": "2024-12-17",
+      "last_buy_date": "2024-12-16",
+      "dividend_gross": 514.0,
+      "source": "api"
+    },
+    {
+      "ticker": "LKOH",
+      "record_date": "2024-05-07",
+      "last_buy_date": "2024-05-06",
+      "dividend_gross": 498.0,
+      "source": "api"
+    },
+    {
+      "ticker": "LKOH",
+      "record_date": "2023-12-17",
+      "last_buy_date": "2023-12-14",
+      "dividend_gross": 447.0,
+      "source": "api"
+    },
+    {
+      "ticker": "LKOH",
+      "record_date": "2023-06-05",
+      "last_buy_date": "2023-06-02",
+      "dividend_gross": 438.0,
+      "source": "api"
+    },
+    {
+      "ticker": "LKOH",
+      "record_date": "2022-12-21",
+      "last_buy_date": "2022-12-20",
+      "dividend_gross": 537.0,
+      "source": "api"
+    },
+    {
+      "ticker": "LKOH",
+      "record_date": "2022-12-21",
+      "last_buy_date": "2022-12-20",
+      "dividend_gross": 256.0,
+      "source": "api"
+    },
+    {
+      "ticker": "LKOH",
+      "record_date": "2021-12-21",
+      "last_buy_date": "2021-12-20",
+      "dividend_gross": 340.0,
+      "source": "api"
+    },
+    {
+      "ticker": "LKOH",
+      "record_date": "2021-07-05",
+      "last_buy_date": "2021-07-02",
+      "dividend_gross": 213.0,
+      "source": "api"
+    },
+    {
+      "ticker": "LKOH",
+      "record_date": "2020-12-18",
+      "last_buy_date": "2020-12-17",
+      "dividend_gross": 46.0,
+      "source": "api"
+    },
+    {
+      "ticker": "LKOH",
+      "record_date": "2020-07-10",
+      "last_buy_date": "2020-07-09",
+      "dividend_gross": 350.0,
+      "source": "api"
+    },
+    {
+      "ticker": "MAGN",
+      "record_date": "2024-10-17",
+      "last_buy_date": "2024-10-16",
+      "dividend_gross": 2.494,
+      "source": "api"
+    },
+    {
+      "ticker": "MAGN",
+      "record_date": "2024-06-10",
+      "last_buy_date": "2024-06-07",
+      "dividend_gross": 2.752,
+      "source": "api"
+    },
+    {
+      "ticker": "MAGN",
+      "record_date": "2022-01-13",
+      "last_buy_date": "2022-01-12",
+      "dividend_gross": 2.663,
+      "source": "api"
+    },
+    {
+      "ticker": "MAGN",
+      "record_date": "2021-09-27",
+      "last_buy_date": "2021-09-24",
+      "dividend_gross": 3.53,
+      "source": "api"
+    },
+    {
+      "ticker": "MAGN",
+      "record_date": "2021-06-17",
+      "last_buy_date": "2021-06-16",
+      "dividend_gross": 1.795,
+      "source": "api"
+    },
+    {
+      "ticker": "MAGN",
+      "record_date": "2021-06-17",
+      "last_buy_date": "2021-06-16",
+      "dividend_gross": 0.945,
+      "source": "api"
+    },
+    {
+      "ticker": "MAGN",
+      "record_date": "2021-01-14",
+      "last_buy_date": "2021-01-13",
+      "dividend_gross": 2.391,
+      "source": "api"
+    },
+    {
+      "ticker": "MAGN",
+      "record_date": "2020-09-23",
+      "last_buy_date": "2020-09-22",
+      "dividend_gross": 0.607,
+      "source": "api"
+    },
+    {
+      "ticker": "MAGN",
+      "record_date": "2020-06-17",
+      "last_buy_date": "2020-06-16",
+      "dividend_gross": 1.507,
+      "source": "api"
+    },
+    {
+      "ticker": "MAGN",
+      "record_date": "2020-01-15",
+      "last_buy_date": "2020-01-14",
+      "dividend_gross": 1.65,
+      "source": "api"
+    },
+    {
+      "ticker": "MGNT",
+      "record_date": "2024-07-15",
+      "last_buy_date": "2024-07-12",
+      "dividend_gross": 412.13,
+      "source": "api"
+    },
+    {
+      "ticker": "MGNT",
+      "record_date": "2024-01-11",
+      "last_buy_date": "2024-01-10",
+      "dividend_gross": 412.13,
+      "source": "api"
+    },
+    {
+      "ticker": "MGNT",
+      "record_date": "2021-12-31",
+      "last_buy_date": "2021-12-30",
+      "dividend_gross": 294.37,
+      "source": "api"
+    },
+    {
+      "ticker": "MGNT",
+      "record_date": "2021-06-25",
+      "last_buy_date": "2021-06-24",
+      "dividend_gross": 245.31,
+      "source": "api"
+    },
+    {
+      "ticker": "MGNT",
+      "record_date": "2021-01-08",
+      "last_buy_date": "2021-01-07",
+      "dividend_gross": 245.31,
+      "source": "api"
+    },
+    {
+      "ticker": "MGNT",
+      "record_date": "2020-06-19",
+      "last_buy_date": "2020-06-18",
+      "dividend_gross": 157.0,
+      "source": "api"
+    },
+    {
+      "ticker": "MGNT",
+      "record_date": "2020-01-10",
+      "last_buy_date": "2020-01-09",
+      "dividend_gross": 147.19,
+      "source": "api"
+    },
+    {
+      "ticker": "MOEX",
+      "record_date": "2026-07-09",
+      "last_buy_date": "2026-07-08",
+      "dividend_gross": 19.57,
+      "source": "api"
+    },
+    {
+      "ticker": "MOEX",
+      "record_date": "2025-07-10",
+      "last_buy_date": "2025-07-09",
+      "dividend_gross": 26.11,
+      "source": "api"
+    },
+    {
+      "ticker": "MOEX",
+      "record_date": "2024-06-14",
+      "last_buy_date": "2024-06-13",
+      "dividend_gross": 17.35,
+      "source": "api"
+    },
+    {
+      "ticker": "MOEX",
+      "record_date": "2023-06-16",
+      "last_buy_date": "2023-06-15",
+      "dividend_gross": 4.84,
+      "source": "api"
+    },
+    {
+      "ticker": "MOEX",
+      "record_date": "2021-05-14",
+      "last_buy_date": "2021-05-13",
+      "dividend_gross": 9.45,
+      "source": "api"
+    },
+    {
+      "ticker": "MOEX",
+      "record_date": "2020-05-15",
+      "last_buy_date": "2020-05-14",
+      "dividend_gross": 7.93,
+      "source": "api"
+    },
+    {
+      "ticker": "MTSS",
+      "record_date": "2026-07-09",
+      "last_buy_date": "2026-07-08",
+      "dividend_gross": 35.0,
+      "source": "api"
+    },
+    {
+      "ticker": "MTSS",
+      "record_date": "2025-07-07",
+      "last_buy_date": "2025-07-04",
+      "dividend_gross": 35.0,
+      "source": "api"
+    },
+    {
+      "ticker": "MTSS",
+      "record_date": "2024-07-16",
+      "last_buy_date": "2024-07-15",
+      "dividend_gross": 35.0,
+      "source": "api"
+    },
+    {
+      "ticker": "MTSS",
+      "record_date": "2023-06-29",
+      "last_buy_date": "2023-06-28",
+      "dividend_gross": 34.29,
+      "source": "api"
+    },
+    {
+      "ticker": "MTSS",
+      "record_date": "2022-07-12",
+      "last_buy_date": "2022-07-11",
+      "dividend_gross": 33.85,
+      "source": "api"
+    },
+    {
+      "ticker": "MTSS",
+      "record_date": "2021-10-12",
+      "last_buy_date": "2021-10-11",
+      "dividend_gross": 10.55,
+      "source": "api"
+    },
+    {
+      "ticker": "MTSS",
+      "record_date": "2021-07-08",
+      "last_buy_date": "2021-07-07",
+      "dividend_gross": 26.51,
+      "source": "api"
+    },
+    {
+      "ticker": "MTSS",
+      "record_date": "2020-10-12",
+      "last_buy_date": "2020-10-09",
+      "dividend_gross": 8.93,
+      "source": "api"
+    },
+    {
+      "ticker": "MTSS",
+      "record_date": "2020-07-09",
+      "last_buy_date": "2020-07-08",
+      "dividend_gross": 20.57,
+      "source": "api"
+    },
+    {
+      "ticker": "MTSS",
+      "record_date": "2020-01-10",
+      "last_buy_date": "2020-01-09",
+      "dividend_gross": 13.25,
+      "source": "api"
+    },
+    {
+      "ticker": "NLMK",
+      "record_date": "2024-05-27",
+      "last_buy_date": "2024-05-24",
+      "dividend_gross": 25.43,
+      "source": "api"
+    },
+    {
+      "ticker": "NLMK",
+      "record_date": "2021-12-07",
+      "last_buy_date": "2021-12-06",
+      "dividend_gross": 13.33,
+      "source": "api"
+    },
+    {
+      "ticker": "NLMK",
+      "record_date": "2021-09-07",
+      "last_buy_date": "2021-09-06",
+      "dividend_gross": 13.62,
+      "source": "api"
+    },
+    {
+      "ticker": "NLMK",
+      "record_date": "2021-06-23",
+      "last_buy_date": "2021-06-22",
+      "dividend_gross": 7.71,
+      "source": "api"
+    },
+    {
+      "ticker": "NLMK",
+      "record_date": "2021-05-11",
+      "last_buy_date": "2021-05-10",
+      "dividend_gross": 7.25,
+      "source": "api"
+    },
+    {
+      "ticker": "NLMK",
+      "record_date": "2020-12-29",
+      "last_buy_date": "2020-12-28",
+      "dividend_gross": 6.43,
+      "source": "api"
+    },
+    {
+      "ticker": "NLMK",
+      "record_date": "2020-10-12",
+      "last_buy_date": "2020-10-09",
+      "dividend_gross": 4.75,
+      "source": "api"
+    },
+    {
+      "ticker": "NLMK",
+      "record_date": "2020-07-13",
+      "last_buy_date": "2020-07-10",
+      "dividend_gross": 3.21,
+      "source": "api"
+    },
+    {
+      "ticker": "NLMK",
+      "record_date": "2020-06-09",
+      "last_buy_date": "2020-06-08",
+      "dividend_gross": 3.12,
+      "source": "api"
+    },
+    {
+      "ticker": "NLMK",
+      "record_date": "2020-01-09",
+      "last_buy_date": "2020-01-08",
+      "dividend_gross": 3.22,
+      "source": "api"
+    },
+    {
+      "ticker": "NVTK",
+      "record_date": "2026-10-12",
+      "last_buy_date": "2026-10-09",
+      "dividend_gross": 35.5,
+      "source": "api"
+    },
+    {
+      "ticker": "NVTK",
+      "record_date": "2026-04-13",
+      "last_buy_date": "2026-04-10",
+      "dividend_gross": 47.23,
+      "source": "api"
+    },
+    {
+      "ticker": "NVTK",
+      "record_date": "2025-10-06",
+      "last_buy_date": "2025-10-03",
+      "dividend_gross": 35.5,
+      "source": "api"
+    },
+    {
+      "ticker": "NVTK",
+      "record_date": "2025-04-28",
+      "last_buy_date": "2025-04-25",
+      "dividend_gross": 46.65,
+      "source": "api"
+    },
+    {
+      "ticker": "NVTK",
+      "record_date": "2024-10-11",
+      "last_buy_date": "2024-10-10",
+      "dividend_gross": 35.5,
+      "source": "api"
+    },
+    {
+      "ticker": "NVTK",
+      "record_date": "2024-03-26",
+      "last_buy_date": "2024-03-25",
+      "dividend_gross": 44.09,
+      "source": "api"
+    },
+    {
+      "ticker": "NVTK",
+      "record_date": "2023-10-10",
+      "last_buy_date": "2023-10-09",
+      "dividend_gross": 34.5,
+      "source": "api"
+    },
+    {
+      "ticker": "NVTK",
+      "record_date": "2023-05-03",
+      "last_buy_date": "2023-05-02",
+      "dividend_gross": 60.58,
+      "source": "api"
+    },
+    {
+      "ticker": "NVTK",
+      "record_date": "2022-10-09",
+      "last_buy_date": "2022-10-06",
+      "dividend_gross": 45.0,
+      "source": "api"
+    },
+    {
+      "ticker": "NVTK",
+      "record_date": "2022-05-05",
+      "last_buy_date": "2022-05-04",
+      "dividend_gross": 43.77,
+      "source": "api"
+    },
+    {
+      "ticker": "NVTK",
+      "record_date": "2021-10-11",
+      "last_buy_date": "2021-10-08",
+      "dividend_gross": 27.67,
+      "source": "api"
+    },
+    {
+      "ticker": "NVTK",
+      "record_date": "2021-05-07",
+      "last_buy_date": "2021-05-06",
+      "dividend_gross": 23.74,
+      "source": "api"
+    },
+    {
+      "ticker": "NVTK",
+      "record_date": "2020-10-12",
+      "last_buy_date": "2020-10-09",
+      "dividend_gross": 11.82,
+      "source": "api"
+    },
+    {
+      "ticker": "NVTK",
+      "record_date": "2020-05-08",
+      "last_buy_date": "2020-05-07",
+      "dividend_gross": 18.1,
+      "source": "api"
+    },
+    {
+      "ticker": "PIKK",
+      "record_date": "2021-05-17",
+      "last_buy_date": "2021-05-14",
+      "dividend_gross": 22.92,
+      "source": "api"
+    },
+    {
+      "ticker": "PIKK",
+      "record_date": "2021-05-17",
+      "last_buy_date": "2021-05-14",
+      "dividend_gross": 22.51,
+      "source": "api"
+    },
+    {
+      "ticker": "PIKK",
+      "record_date": "2020-10-12",
+      "last_buy_date": "2020-10-09",
+      "dividend_gross": 22.71,
+      "source": "api"
+    },
+    {
+      "ticker": "RTKM",
+      "record_date": "2026-07-20",
+      "last_buy_date": "2026-07-17",
+      "dividend_gross": 2.71,
+      "source": "api"
+    },
+    {
+      "ticker": "RTKM",
+      "record_date": "2025-08-13",
+      "last_buy_date": "2025-08-12",
+      "dividend_gross": 2.71,
+      "source": "api"
+    },
+    {
+      "ticker": "RTKM",
+      "record_date": "2024-09-27",
+      "last_buy_date": "2024-09-26",
+      "dividend_gross": 6.06,
+      "source": "api"
+    },
+    {
+      "ticker": "RTKM",
+      "record_date": "2023-12-01",
+      "last_buy_date": "2023-11-30",
+      "dividend_gross": 5.4465,
+      "source": "api"
+    },
+    {
+      "ticker": "RTKM",
+      "record_date": "2022-07-20",
+      "last_buy_date": "2022-07-19",
+      "dividend_gross": 4.56,
+      "source": "api"
+    },
+    {
+      "ticker": "RTKM",
+      "record_date": "2021-07-12",
+      "last_buy_date": "2021-07-09",
+      "dividend_gross": 5.0,
+      "source": "api"
+    },
+    {
+      "ticker": "RTKM",
+      "record_date": "2020-08-21",
+      "last_buy_date": "2020-08-20",
+      "dividend_gross": 5.0,
+      "source": "api"
+    },
+    {
+      "ticker": "SBER",
+      "record_date": "2026-07-20",
+      "last_buy_date": "2026-07-17",
+      "dividend_gross": 37.64,
+      "source": "api"
+    },
+    {
+      "ticker": "SBER",
+      "record_date": "2025-07-18",
+      "last_buy_date": "2025-07-17",
+      "dividend_gross": 34.84,
+      "source": "api"
+    },
+    {
+      "ticker": "SBER",
+      "record_date": "2024-07-11",
+      "last_buy_date": "2024-07-10",
+      "dividend_gross": 33.3,
+      "source": "api"
+    },
+    {
+      "ticker": "SBER",
+      "record_date": "2023-05-11",
+      "last_buy_date": "2023-05-10",
+      "dividend_gross": 25.0,
+      "source": "api"
+    },
+    {
+      "ticker": "SBER",
+      "record_date": "2021-05-12",
+      "last_buy_date": "2021-05-11",
+      "dividend_gross": 18.7,
+      "source": "api"
+    },
+    {
+      "ticker": "SBER",
+      "record_date": "2020-10-05",
+      "last_buy_date": "2020-10-02",
+      "dividend_gross": 18.7,
+      "source": "api"
+    },
+    {
+      "ticker": "SNGSP",
+      "record_date": "2026-07-16",
+      "last_buy_date": "2026-07-15",
+      "dividend_gross": 0.85,
+      "source": "api"
+    },
+    {
+      "ticker": "SNGSP",
+      "record_date": "2025-07-17",
+      "last_buy_date": "2025-07-16",
+      "dividend_gross": 8.5,
+      "source": "api"
+    },
+    {
+      "ticker": "SNGSP",
+      "record_date": "2024-07-18",
+      "last_buy_date": "2024-07-17",
+      "dividend_gross": 12.29,
+      "source": "api"
+    },
+    {
+      "ticker": "SNGSP",
+      "record_date": "2023-07-20",
+      "last_buy_date": "2023-07-19",
+      "dividend_gross": 0.8,
+      "source": "api"
+    },
+    {
+      "ticker": "SNGSP",
+      "record_date": "2022-07-20",
+      "last_buy_date": "2022-07-19",
+      "dividend_gross": 4.73,
+      "source": "api"
+    },
+    {
+      "ticker": "SNGSP",
+      "record_date": "2021-07-20",
+      "last_buy_date": "2021-07-19",
+      "dividend_gross": 6.72,
+      "source": "api"
+    },
+    {
+      "ticker": "SNGSP",
+      "record_date": "2020-07-20",
+      "last_buy_date": "2020-07-17",
+      "dividend_gross": 0.97,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2026-10-13",
+      "last_buy_date": "2026-10-12",
+      "dividend_gross": 32.88,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2026-07-15",
+      "last_buy_date": "2026-07-14",
+      "dividend_gross": 11.61,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2026-01-11",
+      "last_buy_date": "2026-01-08",
+      "dividend_gross": 8.13,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2025-10-14",
+      "last_buy_date": "2025-10-13",
+      "dividend_gross": 14.35,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2025-06-02",
+      "last_buy_date": "2025-05-30",
+      "dividend_gross": 43.11,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2025-01-08",
+      "last_buy_date": "2025-01-06",
+      "dividend_gross": 17.39,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2024-10-08",
+      "last_buy_date": "2024-10-07",
+      "dividend_gross": 38.2,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2024-07-09",
+      "last_buy_date": "2024-07-08",
+      "dividend_gross": 25.17,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2024-01-09",
+      "last_buy_date": "2024-01-08",
+      "dividend_gross": 35.17,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2023-10-11",
+      "last_buy_date": "2023-10-10",
+      "dividend_gross": 27.54,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2023-07-11",
+      "last_buy_date": "2023-07-10",
+      "dividend_gross": 27.71,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2023-01-10",
+      "last_buy_date": "2023-01-09",
+      "dividend_gross": 6.86,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2022-10-11",
+      "last_buy_date": "2022-10-10",
+      "dividend_gross": 32.71,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2022-07-08",
+      "last_buy_date": "2022-07-07",
+      "dividend_gross": 16.14,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2022-01-10",
+      "last_buy_date": "2022-01-07",
+      "dividend_gross": 9.98,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2021-10-12",
+      "last_buy_date": "2021-10-11",
+      "dividend_gross": 16.52,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2021-07-09",
+      "last_buy_date": "2021-07-08",
+      "dividend_gross": 12.3,
+      "source": "api"
+    },
+    {
+      "ticker": "TATN",
+      "record_date": "2020-10-12",
+      "last_buy_date": "2020-10-09",
+      "dividend_gross": 9.94,
+      "source": "api"
+    },
+    {
+      "ticker": "TRNFP",
+      "record_date": "2026-07-20",
+      "last_buy_date": "2026-07-17",
+      "dividend_gross": 204.17,
+      "source": "api"
+    },
+    {
+      "ticker": "TRNFP",
+      "record_date": "2025-07-17",
+      "last_buy_date": "2025-07-16",
+      "dividend_gross": 198.25,
+      "source": "api"
+    },
+    {
+      "ticker": "TRNFP",
+      "record_date": "2024-07-18",
+      "last_buy_date": "2024-07-17",
+      "dividend_gross": 177.2,
+      "source": "api"
+    },
+    {
+      "ticker": "TRNFP",
+      "record_date": "2023-07-20",
+      "last_buy_date": "2023-07-19",
+      "dividend_gross": 166.652,
+      "source": "api"
+    },
+    {
+      "ticker": "TRNFP",
+      "record_date": "2022-07-20",
+      "last_buy_date": "2022-07-19",
+      "dividend_gross": 104.9736,
+      "source": "api"
+    },
+    {
+      "ticker": "TRNFP",
+      "record_date": "2021-07-19",
+      "last_buy_date": "2021-07-16",
+      "dividend_gross": 92.2428,
+      "source": "api"
+    },
+    {
+      "ticker": "TRNFP",
+      "record_date": "2020-10-20",
+      "last_buy_date": "2020-10-19",
+      "dividend_gross": 116.122,
+      "source": "api"
+    },
+    {
+      "ticker": "VTBR",
+      "record_date": "2026-07-20",
+      "last_buy_date": "2026-07-17",
+      "dividend_gross": 9.71,
+      "source": "api"
+    },
+    {
+      "ticker": "VTBR",
+      "record_date": "2025-07-11",
+      "last_buy_date": "2025-07-10",
+      "dividend_gross": 25.58,
+      "source": "api"
+    },
+    {
+      "ticker": "VTBR",
+      "record_date": "2021-07-15",
+      "last_buy_date": "2021-07-14",
+      "dividend_gross": 7.0,
+      "source": "api"
+    },
+    {
+      "ticker": "VTBR",
+      "record_date": "2020-10-05",
+      "last_buy_date": "2020-10-02",
+      "dividend_gross": 3.865,
+      "source": "api"
+    }
+  ]
+}
