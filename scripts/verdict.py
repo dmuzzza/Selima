@@ -380,6 +380,7 @@ def main(argv: list[str] | None = None) -> int:
             calendar,
             raw,
             gap_match_ratio=dividend_thresholds.gap_match_ratio,
+            t1_settlement_switch=dividend_thresholds.t1_settlement_switch,
         )
         ex_bars = applied_ex_bars(resolved)
         coverage = build_coverage(

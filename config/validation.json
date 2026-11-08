@@ -48,6 +48,7 @@
     "n_trials": 0
   },
   "dividends": {
-    "gap_match_ratio": 0.3
+    "gap_match_ratio": 0.3,
+    "t1_settlement_switch": "2023-07-31"
   }
 }

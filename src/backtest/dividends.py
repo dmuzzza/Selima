@@ -38,6 +38,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_DIVIDENDS_PATH = Path(__file__).resolve().parents[2] / "config" / "dividends.json"
 DEFAULT_VALIDATION_PATH = Path(__file__).resolve().parents[2] / "config" / "validation.json"
 DEFAULT_GAP_MATCH_RATIO = 0.3
+# MOEX moved shares and bonds to a single T+1 settlement cycle on 2023-07-31
+# (MOEX annual report 2023). The API's `last_buy_date` changed meaning with it:
+# before the switch it is the ex-date, after it the last cum-dividend day.
+DEFAULT_T1_SETTLEMENT_SWITCH = date(2023, 7, 31)
 
 # Event statuses. Only `applied` marks trades.
 APPLIED = "applied"
@@ -272,6 +276,7 @@ class DividendThresholds:
     """The `dividends` section of config/validation.json."""
 
     gap_match_ratio: float
+    t1_settlement_switch: date
     version: str
     model_revision: str
     sha256: str
@@ -280,6 +285,7 @@ class DividendThresholds:
     def describe(self) -> dict:
         return {
             "gap_match_ratio": self.gap_match_ratio,
+            "t1_settlement_switch": self.t1_settlement_switch.isoformat(),
             "dividends_thresholds": f"{self.version}+{self.sha256[:12]}",
             "model_revision": self.model_revision,
         }
@@ -312,8 +318,19 @@ def load_dividend_thresholds(
     if not 0.0 < ratio <= 1.0:
         raise ValueError(f"{resolved}: gap_match_ratio must be in (0, 1], got {ratio}")
 
+    switch_raw = section.get(
+        "t1_settlement_switch", DEFAULT_T1_SETTLEMENT_SWITCH.isoformat()
+    )
+    try:
+        t1_settlement_switch = date.fromisoformat(str(switch_raw))
+    except ValueError as exc:
+        raise ValueError(
+            f"{resolved}: bad t1_settlement_switch {switch_raw!r}"
+        ) from exc
+
     thresholds = DividendThresholds(
         gap_match_ratio=ratio,
+        t1_settlement_switch=t1_settlement_switch,
         version=str(payload.get("version", "")),
         model_revision=str(payload.get("model_revision", "1")),
         sha256=hashlib.sha256(raw).hexdigest(),
@@ -413,8 +430,24 @@ def ordered_candles(candles: Sequence[Candle]) -> list[Candle]:
     return sorted(candles, key=lambda candle: candle.open_time)
 
 
-def find_ex_bar(candles: Sequence[Candle], last_buy_date: date) -> tuple[Candle, Candle] | None:
-    """First bar strictly after `last_buy_date` and the bar before it.
+def find_ex_bar(
+    candles: Sequence[Candle],
+    last_buy_date: date,
+    *,
+    t1_settlement_switch: date = DEFAULT_T1_SETTLEMENT_SWITCH,
+) -> tuple[Candle, Candle] | None:
+    """The ex-dividend bar and the bar before it.
+
+    The rule depends on the settlement regime, because the API's `last_buy_date`
+    changed meaning with the MOEX switch to T+1 on 2023-07-31:
+
+    - before the switch the drop sits on the session of `last_buy_date` itself;
+    - on and after the switch it sits on the first session strictly after it.
+
+    The window is one session either way: a two-session window was measured and
+    rejected (placebo false-match rate doubled while it found no extra event,
+    ADR-030). A `last_buy_date` that falls on a non-trading day has no session of
+    its own, so the next session is used in both regimes.
 
     The comparison is on the calendar date of `open_time` in the candle's own
     timezone (MSK for data loaded from PostgreSQL), so a 00:00 UTC bar is not
@@ -422,6 +455,10 @@ def find_ex_bar(candles: Sequence[Candle], last_buy_date: date) -> tuple[Candle,
     weekends since 2025-03 (T2-23).
     """
     ordered = ordered_candles(candles)
+    if last_buy_date < t1_settlement_switch:
+        for index in range(1, len(ordered)):
+            if ordered[index].open_time.date() == last_buy_date:
+                return ordered[index - 1], ordered[index]
     for index in range(1, len(ordered)):
         if ordered[index].open_time.date() > last_buy_date:
             return ordered[index - 1], ordered[index]
@@ -433,6 +470,7 @@ def resolve_event(
     candles: Sequence[Candle],
     *,
     gap_match_ratio: float = DEFAULT_GAP_MATCH_RATIO,
+    t1_settlement_switch: date = DEFAULT_T1_SETTLEMENT_SWITCH,
 ) -> ResolvedDividend:
     """Place one event on a bar and decide whether the price actually dropped."""
     if gap_match_ratio <= 0:
@@ -476,7 +514,9 @@ def resolve_event(
             source=event.source,
         )
 
-    found = find_ex_bar(candles, event.last_buy_date)
+    found = find_ex_bar(
+        candles, event.last_buy_date, t1_settlement_switch=t1_settlement_switch
+    )
     if found is None:
         return ResolvedDividend(
             ticker=event.ticker,
@@ -524,6 +564,7 @@ def resolve_events(
     candles_by_ticker: Mapping[str, Sequence[Candle]],
     *,
     gap_match_ratio: float = DEFAULT_GAP_MATCH_RATIO,
+    t1_settlement_switch: date = DEFAULT_T1_SETTLEMENT_SWITCH,
 ) -> list[ResolvedDividend]:
     """Resolve every event that belongs to a ticker present in the run."""
     resolved: list[ResolvedDividend] = []
@@ -533,7 +574,12 @@ def resolve_events(
             continue
         for event in events:
             resolved.append(
-                resolve_event(event, candles, gap_match_ratio=gap_match_ratio)
+                resolve_event(
+                    event,
+                    candles,
+                    gap_match_ratio=gap_match_ratio,
+                    t1_settlement_switch=t1_settlement_switch,
+                )
             )
     return resolved
 

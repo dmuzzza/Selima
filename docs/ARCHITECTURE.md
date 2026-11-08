@@ -152,9 +152,10 @@ p_selima_v8.1/
 │   │   │                                  TP/SL из config/tp_sl.json, MissingExitPolicyError (ADR-019)
 │   │   ├── costs.py                   [C] CostModel: спред (½ на сторону), проскальзывание,
 │   │   │                                  tp_penalty (чувствительность), метки GROSS/NET (ADR-016)
-│   │   ├── dividends.py               [C] дивидендный календарь: отсечка по `last_buy_date`,
-│   │   │                                  сопоставление с падением, статусы applied/no_gap_match/
-│   │   │                                  not_paid/future/out_of_history, покрытие (ADR-025)
+│   │   ├── dividends.py               [C] дивидендный календарь: отсечка по `last_buy_date` и режиму
+│   │   │                                  расчётов (T+1 с 2023-07-31), сопоставление с падением,
+│   │   │                                  статусы applied/no_gap_match/not_paid/future/out_of_history,
+│   │   │                                  покрытие (ADR-025, ADR-030)
 │   │   ├── walk_forward.py            [C] окна train/test, отбор параметров на train, OOS-прогон (ADR-015)
 │   │   ├── null_test.py               [C] контроль движка: случайные входы должны терять издержки (ADR-020)
 │   │   ├── heatmap.py                 [C] сетка TP/SL: плато или одна точка, пороги из validation.json (ADR-021)
@@ -182,9 +183,9 @@ p_selima_v8.1/
 │   ├── test_hypothesis_log.py         журнал гипотез: append-only, глобальный счётчик, квартальный бюджет
 │   ├── test_portfolio.py              мультиинструмент: фингерпринты, пул, блоки, гэпы, вердикты
 │   ├── test_verdict.py                вердикт: каждый гейт, порядок групп, флаги, отсутствие входов
-│   ├── test_dividends.py              дивиденды: отсечка по `last_buy_date`, сопоставление с падением,
-│   │                                  статусы not_paid/future/out_of_history, покрытие, sha256,
-│   │                                  `payouts`, слой `annotations`, ручные записи без reference
+│   ├── test_dividends.py              дивиденды: отсечка по режиму расчётов (до/после T+1), неторговый
+│   │                                  день, сопоставление с падением, статусы not_paid/future/
+│   │                                  out_of_history, покрытие, sha256, `payouts`, `annotations`
 │   ├── test_fetch_dividends.py        слияние выплат с одной экс-датой, детерминизм, отпечаток сырого ответа
 │   ├── test_strategy_stats.py         StrategyStats: две базы доходности, engaged-капитал, деление на ноль
 │   ├── test_sharpe_zscore.py          Sharpe/Z-score: порядок реализации, окно, пороги и причины None
@@ -395,7 +396,7 @@ PnL считается тремя слоями: `pnl_price` (сырые цены
 
 | Правило | Значение |
 |---|---|
-| отсечка (ex-бар) | первый торговый бар строго после `last_buy_date`; weekend-бары участвуют (правило уточняется в ADR-030) |
+| отсечка (ex-бар) | до `dividends.t1_settlement_switch` (2023-07-31) — сессия самого `last_buy_date`, после — следующая сессия; weekend-бары участвуют (ADR-030) |
 | пометка | `entry_time < ex_bar_open <= exit_time` (то же окно, что у `gap_affected`) |
 | применение события | падение на ex-баре ≥ `gap_match_ratio` (0.3) от `dividend_gross / prev_close`; рост не считается никогда |
 | иначе | `no_gap_match`: событие печатается с причиной, сделки не помечаются |

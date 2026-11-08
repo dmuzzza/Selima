@@ -145,8 +145,12 @@ def test_price_rise_never_matches_even_when_large():
     assert resolved.status == NO_GAP_MATCH
 
 
-def test_small_drop_is_rejected_as_no_gap_match():
-    """SBER 2023: the drop happened on the bar before the ex-bar."""
+def test_pre_switch_event_drops_on_the_last_buy_session():
+    """Before the MOEX T+1 switch the API's `last_buy_date` is the ex-date itself.
+
+    SBER 2023-05-10: the bar of that day opens 9.14% lower. The old "strictly
+    after" rule reported `no_gap_match` and left the trade unmarked (ADR-030).
+    """
     start = datetime(2023, 5, 8, 3, 0)
     candles = [
         candle(start, 238.69, 238.27),
@@ -155,10 +159,51 @@ def test_small_drop_is_rejected_as_no_gap_match():
     ]
     event = DividendEvent("SBER", date(2023, 5, 10), 25.0)
     resolved = resolve_event(event, candles, gap_match_ratio=0.3)
-    assert resolved.status == NO_GAP_MATCH
+    assert resolved.status == APPLIED
     assert resolved.ex_bar_open is not None
-    assert resolved.ex_bar_open.date() == date(2023, 5, 11)
-    assert "ratio" in resolved.reason
+    assert resolved.ex_bar_open.date() == date(2023, 5, 10)
+    assert resolved.drop_percent == pytest.approx(9.14, abs=0.01)
+    assert resolved.expected_gap_percent == pytest.approx(10.49, abs=0.01)
+
+
+def test_switch_boundary_decides_which_session_is_the_ex_bar():
+    """The regime changes on 2023-07-31: same date, two different ex-bars."""
+    candles = [
+        candle(datetime(2023, 7, 27, 3, 0), 100.0, 100.0),
+        candle(datetime(2023, 7, 28, 3, 0), 90.0, 95.0),
+        candle(datetime(2023, 7, 31, 3, 0), 91.0, 92.0),
+    ]
+    before = find_ex_bar(candles, date(2023, 7, 28))
+    assert before is not None
+    assert before[1].open_time.date() == date(2023, 7, 28)
+
+    at_switch = find_ex_bar(
+        candles, date(2023, 7, 28), t1_settlement_switch=date(2023, 7, 28)
+    )
+    assert at_switch is not None
+    assert at_switch[1].open_time.date() == date(2023, 7, 31)
+
+
+def test_pre_switch_event_on_a_non_trading_day_uses_the_next_session():
+    """A date with no session of its own falls back to the next session."""
+    candles = [
+        candle(datetime(2023, 7, 7, 3, 0), 100.0, 100.0),
+        candle(datetime(2023, 7, 10, 3, 0), 90.0, 95.0),
+    ]
+    found = find_ex_bar(candles, date(2023, 7, 8))
+    assert found is not None
+    assert found[1].open_time.date() == date(2023, 7, 10)
+
+
+def test_post_switch_event_keeps_using_the_next_session():
+    """SBER 2023-10-02: after the switch the drop sits on the following session."""
+    candles = [
+        candle(datetime(2023, 9, 29, 3, 0), 260.0, 262.0),
+        candle(datetime(2023, 10, 2, 3, 0), 240.0, 245.0),
+    ]
+    found = find_ex_bar(candles, date(2023, 9, 29))
+    assert found is not None
+    assert found[1].open_time.date() == date(2023, 10, 2)
 
 
 def test_event_after_the_last_candle_is_future_not_dropped():
@@ -476,19 +521,19 @@ def test_shipped_thresholds_have_the_sanity_floor():
 
 
 def test_coverage_lists_rejected_events_with_a_reason():
-    start = datetime(2023, 5, 8, 3, 0)
+    start = datetime(2024, 7, 9, 3, 0)
     candles = {
         "SBER": [
-            candle(start, 238.69, 238.27),
-            candle(start + 2 * DAY, 216.50, 227.06),
-            candle(start + 3 * DAY, 228.87, 229.32),
+            candle(start, 320.0, 318.0),
+            candle(start + DAY, 319.0, 320.0),
+            candle(start + 2 * DAY, 321.0, 322.0),
         ]
     }
     calendar = DividendCalendar(
         version="test",
         sha256="0" * 64,
         source="memory",
-        events=(DividendEvent("SBER", date(2023, 5, 10), 25.0),),
+        events=(DividendEvent("SBER", date(2024, 7, 10), 33.0),),
     )
     resolved = resolve_events(calendar, candles, gap_match_ratio=0.3)
     coverage = build_coverage(
@@ -496,7 +541,7 @@ def test_coverage_lists_rejected_events_with_a_reason():
         resolved,
         {"SBER": {candles["SBER"][2].open_time: 0.8}},
         tickers=["SBER"],
-        years=[2023],
+        years=[2024],
         gap_threshold_percent=5.0,
     )
     assert coverage.applied == 0
