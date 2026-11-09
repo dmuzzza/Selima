@@ -38,6 +38,8 @@ debug/verdict_*.md
 debug/verdict_*.json
 debug/portfolio_*.json
 debug/portfolio_*.md
+debug/weekend_*.json
+debug/weekend_*.md
 *.db
 *.db-journal
 *.sqlite3

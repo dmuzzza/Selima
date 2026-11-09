@@ -163,6 +163,8 @@ p_selima_v8.1/
 │   │   │                                  бюджет 20 идей, grid_cells для screening, sealed_access (ADR-029)
 │   │   ├── portfolio.py               [C] мультиинструмент: одно правило, независимые счета, блочный bootstrap (ADR-022)
 │   │   ├── verdict.py                 [C] единый вердикт: входы, упорядоченные гейты, Markdown (ADR-023)
+│   │   ├── weekend.py                 [C] weekend-бары: три группы сделок, микроструктура против будней,
+│   │   │                                  гэп через выходные суммой сессий, расписание брокера (ADR-031)
 │   │   └── backtester.py              [L] отдельный движок бэктеста (не используется стратегиями)
 │   ├── storage/models.py              [L] устаревшая ORM-модель "marketdata"
 │   └── utils/
@@ -187,6 +189,8 @@ p_selima_v8.1/
 │   │                                  день, сопоставление с падением, статусы not_paid/future/
 │   │                                  out_of_history, покрытие, sha256, `payouts`, `annotations`
 │   ├── test_fetch_dividends.py        слияние выплат с одной экс-датой, детерминизм, отпечаток сырого ответа
+│   ├── test_weekend.py                weekend-бары: классификация сделок, окно по тикеру, микроструктура,
+│   │                                  сумма гэпа по сессиям, расхождения расписания, правило ветки 2
 │   ├── test_strategy_stats.py         StrategyStats: две базы доходности, engaged-капитал, деление на ноль
 │   ├── test_sharpe_zscore.py          Sharpe/Z-score: порядок реализации, окно, пороги и причины None
 │   ├── test_scheduler_signal_lookup.py один вызов detect_signals за цикл обработки инструмента
@@ -218,7 +222,9 @@ p_selima_v8.1/
 │                                          portfolio_run.py (мультиинструмент: пул, блочный bootstrap, ADR-022),
 │                                          fetch_dividends.py (выгрузка дивидендов: сверка FIGI, слияние
 │                                          выплат с одной экс-датой, слой annotations, ADR-025),
-│                                          verdict.py (единый вердикт: сборка входов, Markdown + JSON, ADR-023)
+│                                          verdict.py (единый вердикт: сборка входов, Markdown + JSON, ADR-023),
+│                                          weekend_audit.py (weekend-бары: группы сделок, микроструктура,
+│                                          расписание брокера, ADR-031)
 ├── optimization/                      [T] grid_tp_sl_dual_ma.py, optimize_macd_plus.py,
 │                                          _check_db.py, tz_ml_optimization.md (ТЗ на ML)
 ├── debug/                             [T] debug_margin.py, debug_instrument.py
@@ -312,6 +318,7 @@ PostgreSQL (`PgLiveTradeRepository` / `PgStopOrderRepository`). SQLite-репо�
 | `Portfolio` (`portfolio.py`) | runner стратегии, `config/portfolio.json`, `config/costs.json` | `scripts/portfolio_run.py` |
 | `Dividends` (`dividends.py`) | `config/dividends.json`, `config/validation.json` (секция `dividends`), свечи | `portfolio.py`, `scripts/portfolio_run.py`, `scripts/verdict.py` |
 | `Verdict` (`verdict.py`) | `IntervalResult`-входы от `portfolio.py`, `heatmap.py`, `null_test.py`, `config/validation.json` (секция `verdict`) | `scripts/verdict.py` |
+| `Weekend` (`weekend.py`) | `PooledTrade`/`block_bootstrap` из `portfolio.py`, свечи, `config/validation.json` (секция `weekend` + `min_sample_trades`) | `scripts/weekend_audit.py` |
 | `HypothesisLog` (`hypothesis_log.py`) | `journal/hypotheses.jsonl` | `scripts/evaluate.py` (T2-25), отчёты |
 | `CostModel` (`costs.py`) | `config/commissions.py`, `config/costs.json` | `TradeSimulator`, `scripts/*` |
 | `StrategyFactory` | `strategy_registry` | scheduler, dashboard |
@@ -464,7 +471,7 @@ PENDING), затем сверка стоп-ордеров; закрывает с
 | open/high/low/close | Numeric(14,6) | |
 | volume | BigInteger | |
 | is_complete | Boolean | |
-| candle_source | Integer | 0 UNSPECIFIED, 1 EXCHANGE, 2 DEALER_WEEKEND |
+| candle_source | Integer | 0 UNSPECIFIED, 1 EXCHANGE, 2 DEALER_WEEKEND. Фактически в базе у всех 164 306 баров `1`, включая 7885 weekend-баров, поэтому маркер `== 2` для определения выходного бара непригоден (ADR-031); выходной бар определяется `open_time.weekday() >= 5` в MSK |
 
 `UNIQUE (figi, timeframe, open_time)`. Схема создаётся не приложением, а вручную
 (`Base.metadata.create_all` закомментирован).
@@ -679,6 +686,15 @@ PostgreSQL). Оставлен для legacy-скриптов и локальны
 27. Рабочая копия не является git-репозиторием.
 28. `ruff check src` — 134 замечания на момент T0-2 (baseline, не исправлялись):
     `UP045`/`UP006` (typing → PEP 604/585), `I001` (порядок импортов), `F401`, `E722`.
+29. `candle_source` не различает выходные бары: у всех 164 306 баров в базе значение `1`
+    (`EXCHANGE`), включая 7885 weekend-баров; `2` (`DEALER_WEEKEND`) не встречается ни
+    разу. Поле при загрузке **не теряется** — `sdk_broker.get_candles` передаёт
+    `candle.candle_source`, `HistoryManager` пишет его в БД и читает обратно, — но
+    запрос не задаёт `GetCandlesRequest.candle_source_type` (значение по умолчанию 0,
+    «все свечи»), и сервер помечает все бары как биржевые. Поэтому классификация
+    выходных идёт по `open_time.weekday() >= 5` в MSK (ADR-031), а не по этому полю.
+    Отдельная мелкая задача — проверить, меняет ли `candle_source_type=INCLUDE_WEEKEND`
+    (3) маркировку на `2`; на модель не влияет.
 
 ---
 
