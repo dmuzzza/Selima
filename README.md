@@ -171,7 +171,11 @@ p_selima_v8.1/
 | Мультиинструмент: одно правило на 20 бумагах (Markdown + CSV + JSON) | `uv run python scripts/portfolio_run.py --tag t2-20` |
 | Единый вердикт: гейты по пулу, holdout, издержкам, плато, null-тесту (Markdown + JSON) | `uv run python scripts/verdict.py --tag t2-21 --n-trials 12` |
 | Журнал гипотез: бюджет 20 идей на квартал, `grid_cells` — для screening; хеш-цепочка против перезаписи | `journal/hypotheses.jsonl`, пишет `src/backtest/hypothesis_log.py`; дизайн — `docs/EVALUATE_DESIGN.md` |
+| `evaluate`: идея → вердикт с MDE, поправкой на число попыток из журнала и запечатанным OOS (Markdown + JSON) | `uv run python scripts/evaluate.py --strategy dual_ma_crossover_after_testing --hypothesis "..." --tag my-idea-1` |
+| `evaluate` без записи в журнал и без расхода бюджета (smoke) | добавить `--dry-run`; отчёт помечен `NOT RECORDED` |
+| Записать нижнюю границу попыток, сделанных до журнала (`kind="legacy"`, бюджет не тратит) | `uv run python scripts/evaluate.py --record-legacy` |
 | Дивиденды: выгрузка календаря из API (ручной запуск, токен из env; слияние выплат с одной экс-датой, слой `annotations` сохраняется, повторный `--write` идемпотентен) | `uv run python scripts/fetch_dividends.py --tickers SBER SNGSP --write` |
+| Weekend-бары: три группы сделок с блочным CI, микроструктура против будней, расписание брокера (Markdown + JSON) | `uv run python scripts/weekend_audit.py --tag t2-23`; без сети — `--no-schedule` |
 | Чувствительность: прогон без дивидендного календаря | `--no-dividends` в `portfolio_run.py` и `verdict.py` |
 | Чувствительность: издержки ×2 / TP-штраф / уровни от цены исполнения | `--spread-bps 4 --slippage-bps 6`, `--tp-penalty-bps 4`, `--levels-from-fill` |
 | Тесты | `uv run pytest` |
@@ -215,7 +219,8 @@ entry_time)`, — окно от самого раннего входа до са
 `CLEAN_SET` — список файлов/каталогов без legacy-долга (T1-7): сейчас
 `src/backtest/costs.py`, `src/backtest/exit_policy.py`, `src/backtest/heatmap.py`,
 `src/backtest/null_test.py`, `src/backtest/portfolio.py`, `src/backtest/simulator.py`,
-`src/backtest/verdict.py`, `src/backtest/walk_forward.py`, `src/strategies/_null_entry`,
+`src/backtest/verdict.py`, `src/backtest/walk_forward.py`, `src/backtest/weekend.py`,
+`src/strategies/_null_entry`,
 `src/strategies/_template`, `src/strategies/strategy_registry.py`,
 `src/trading/pending_recovery.py`, `tests`.
 При исправлении legacy-файла путь **добавляется** в набор; удалять пути нельзя.

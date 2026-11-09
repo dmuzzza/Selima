@@ -284,6 +284,77 @@ def test_a_wide_grid_still_costs_one_idea(tmp_path):
     assert len(load_hypotheses(path)) == 2
 
 
+def test_legacy_line_does_not_spend_the_budget(tmp_path):
+    path = tmp_path / "hypotheses.jsonl"
+
+    written = journal.record_legacy_baseline(
+        variants=79,
+        notes="ADR-015: 4, ADR-021: 42, ADR-022: 1, ADR-023: 25, ADR-028: 2",
+        path=path,
+        recorded_at=NOW,
+    )
+
+    assert written.kind == "legacy"
+    assert budget_state(load_hypotheses(path), NOW.date()).used == 0
+    assert trial_count(load_hypotheses(path)) == 79
+
+
+def test_legacy_line_keeps_the_hash_chain(tmp_path):
+    path = tmp_path / "hypotheses.jsonl"
+    journal.record_legacy_baseline(
+        variants=79, notes="pre-journal attempts", path=path, recorded_at=NOW
+    )
+    record_attempt(
+        hypothesis="first real idea",
+        strategy="dual_ma",
+        timeframe="4h",
+        tickers=["SBER"],
+        universe_source="portfolio",
+        config={},
+        path=path,
+        recorded_at=NOW,
+    )
+
+    verify_chain(load_hypotheses(path))
+
+
+def test_legacy_line_can_be_written_after_the_budget_is_spent(tmp_path):
+    path = tmp_path / "hypotheses.jsonl"
+    for number in range(20):
+        record_attempt(
+            hypothesis=f"idea {number}",
+            strategy="dual_ma",
+            timeframe="4h",
+            tickers=["SBER"],
+            universe_source="portfolio",
+            config={},
+            path=path,
+            recorded_at=NOW,
+            limit=20,
+        )
+
+    written = journal.record_legacy_baseline(
+        variants=10, notes="pre-journal attempts", path=path, recorded_at=NOW
+    )
+
+    assert written.kind == "legacy"
+    assert len(load_hypotheses(path)) == 21
+
+
+def test_legacy_line_requires_notes(tmp_path):
+    with pytest.raises(journal.HypothesisLogError, match="notes"):
+        journal.record_legacy_baseline(
+            variants=10, notes="  ", path=tmp_path / "hypotheses.jsonl", recorded_at=NOW
+        )
+
+
+def test_legacy_variants_must_be_positive(tmp_path):
+    with pytest.raises(journal.HypothesisLogError, match="variants"):
+        journal.record_legacy_baseline(
+            variants=0, notes="sources", path=tmp_path / "hypotheses.jsonl", recorded_at=NOW
+        )
+
+
 def test_budget_resets_in_the_next_quarter(tmp_path):
     path = tmp_path / "hypotheses.jsonl"
     for number in range(20):

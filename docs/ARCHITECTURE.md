@@ -156,6 +156,9 @@ p_selima_v8.1/
 │   │   │                                  расчётов (T+1 с 2023-07-31), сопоставление с падением,
 │   │   │                                  статусы applied/no_gap_match/not_paid/future/out_of_history,
 │   │   │                                  покрытие (ADR-025, ADR-030)
+│   │   ├── evaluate.py                [C] `evaluate`: MDE с мощностью 0.80, пять исходов
+│   │   │                                  (`underpowered`), обрезка запечатанного периода,
+│   │   │                                  Markdown-отчёт (ADR-032)
 │   │   ├── walk_forward.py            [C] окна train/test, отбор параметров на train, OOS-прогон (ADR-015)
 │   │   ├── null_test.py               [C] контроль движка: случайные входы должны терять издержки (ADR-020)
 │   │   ├── heatmap.py                 [C] сетка TP/SL: плато или одна точка, пороги из validation.json (ADR-021)
@@ -213,6 +216,7 @@ p_selima_v8.1/
 │                                          stop_orders, constraint; PostgreSQL: add_signal_key)
 ├── scripts/                           [T] экспорт сделок/свечей, отчёт, top10 по объёму,
 │                                          таблица FIGI, проверка constraint,
+│                                          __init__.py — пакет, чтобы evaluate переиспользовал раннеры verdict,
 │                                          pnl_baseline.py (baseline PnL до/после правок движка),
 │                                          walk_forward.py (OOS-оценка TP/SL),
 │                                          cost_audit.py (разложение Δ PnL по слоям, bootstrap-CI),
@@ -223,6 +227,8 @@ p_selima_v8.1/
 │                                          fetch_dividends.py (выгрузка дивидендов: сверка FIGI, слияние
 │                                          выплат с одной экс-датой, слой annotations, ADR-025),
 │                                          verdict.py (единый вердикт: сборка входов, Markdown + JSON, ADR-023),
+│                                          evaluate.py (идея → вердикт: MDE с мощностью, поправка из журнала,
+│                                          запечатанный OOS, --dry-run, --record-legacy, ADR-032),
 │                                          weekend_audit.py (weekend-бары: группы сделок, микроструктура,
 │                                          расписание брокера, ADR-031)
 ├── optimization/                      [T] grid_tp_sl_dual_ma.py, optimize_macd_plus.py,
@@ -318,6 +324,7 @@ PostgreSQL (`PgLiveTradeRepository` / `PgStopOrderRepository`). SQLite-репо�
 | `Portfolio` (`portfolio.py`) | runner стратегии, `config/portfolio.json`, `config/costs.json` | `scripts/portfolio_run.py` |
 | `Dividends` (`dividends.py`) | `config/dividends.json`, `config/validation.json` (секция `dividends`), свечи | `portfolio.py`, `scripts/portfolio_run.py`, `scripts/verdict.py` |
 | `Verdict` (`verdict.py`) | `IntervalResult`-входы от `portfolio.py`, `heatmap.py`, `null_test.py`, `config/validation.json` (секция `verdict`) | `scripts/verdict.py` |
+| `Evaluate` (`evaluate.py`) | `verdict.py`, `hypothesis_log.py`, `config/validation.json` (секция `evaluate`) | `scripts/evaluate.py` |
 | `Weekend` (`weekend.py`) | `PooledTrade`/`block_bootstrap` из `portfolio.py`, свечи, `config/validation.json` (секция `weekend` + `min_sample_trades`) | `scripts/weekend_audit.py` |
 | `HypothesisLog` (`hypothesis_log.py`) | `journal/hypotheses.jsonl` | `scripts/evaluate.py` (T2-25), отчёты |
 | `CostModel` (`costs.py`) | `config/commissions.py`, `config/costs.json` | `TradeSimulator`, `scripts/*` |

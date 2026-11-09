@@ -16,6 +16,7 @@ env:
     config/commissions.py
     src/backtest/costs.py
     src/backtest/dividends.py
+    src/backtest/evaluate.py
     src/backtest/exit_policy.py
     src/backtest/heatmap.py
     src/backtest/hypothesis_log.py
@@ -24,6 +25,7 @@ env:
     src/backtest/simulator.py
     src/backtest/verdict.py
     src/backtest/walk_forward.py
+    src/backtest/weekend.py
     src/market_data/preparation.py
     src/strategies/_null_entry
     src/strategies/_template

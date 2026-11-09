@@ -12,6 +12,10 @@ One line per idea, JSONL, append-only. Two counters, deliberately separate:
 - **grid_cells** — how many parameter variants were looked at inside the idea;
   informational for the report and the input of the screening correction.
 
+A `kind="legacy"` line records the attempts made before the journal existed: it
+counts towards the multiplicity correction but does not spend the idea budget,
+because those attempts are history, not a new question to the data.
+
 Every line carries `prev_hash`, the SHA-256 of the previous canonical line, so a
 silent rewrite of the file breaks the chain and `load_hypotheses()` refuses it.
 """
@@ -41,8 +45,10 @@ GENESIS_HASH = "0" * 64
 
 UNIVERSE_SOURCES = ("portfolio", "manual")
 # An idea spends the budget; a sealed-access mark records that the sealed period
-# was opened and must not be counted as a new idea.
-ENTRY_KINDS = ("idea", "sealed")
+# was opened and must not be counted as a new idea. A legacy line records the
+# attempts made before the journal existed: it counts in `trial_count()` but is
+# history, so it does not spend the budget either.
+ENTRY_KINDS = ("idea", "sealed", "legacy")
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -280,6 +286,7 @@ def record_attempt(
     sealed_access: bool = False,
     tag: str = "",
     notes: str = "",
+    kind: str = "idea",
     path: Path | str = DEFAULT_JOURNAL_PATH,
     recorded_at: datetime | None = None,
     limit: int = TRIAL_BUDGET_PER_QUARTER,
@@ -289,15 +296,19 @@ def record_attempt(
     One entry is one idea: `grid_cells` is recorded for the screening correction
     and the report but does not spend the budget. The budget is checked against
     the quarter of `recorded_at` before the entry is written.
+
+    `kind="legacy"` records attempts made before the journal existed: it counts
+    in `trial_count()` but does not spend the budget, so the check is skipped.
     """
     moment = recorded_at or datetime.now(UTC)
     entries = load_hypotheses(path)
-    state = budget_state(entries, moment.date(), limit)
-    if state.used + 1 > state.limit:
-        raise TrialBudgetExceeded(
-            f"quarterly idea budget exhausted: {state.used} of {state.limit} ideas used, "
-            f"this run would be number {state.used + 1}"
-        )
+    if kind == "idea":
+        state = budget_state(entries, moment.date(), limit)
+        if state.used + 1 > state.limit:
+            raise TrialBudgetExceeded(
+                f"quarterly idea budget exhausted: {state.used} of {state.limit} ideas "
+                f"used, this run would be number {state.used + 1}"
+            )
     entry = HypothesisEntry(
         recorded_at=moment,
         hypothesis=hypothesis,
@@ -310,17 +321,59 @@ def record_attempt(
         sealed_access=sealed_access,
         tag=tag,
         notes=notes,
+        kind=kind,
     )
     return append_hypothesis(entry, path)
+
+
+def record_legacy_baseline(
+    *,
+    variants: int,
+    notes: str,
+    hypothesis: str = "Attempts made before the journal existed",
+    strategy: str = "all",
+    timeframe: str = "mixed",
+    tickers: Iterable[str] = ("ALL",),
+    universe_source: str = "portfolio",
+    path: Path | str = DEFAULT_JOURNAL_PATH,
+    recorded_at: datetime | None = None,
+) -> HypothesisEntry:
+    """Record the pre-journal attempt count as one `legacy` line.
+
+    `variants` is a lower bound: the grids and filter variants actually run, read
+    from the ADRs (ADR-015, ADR-021, ADR-022, ADR-023, ADR-028, ADR-030,
+    ADR-031). The line feeds the multiplicity correction and does not spend the
+    idea budget.
+    """
+    if variants < 1:
+        raise HypothesisLogError(f"variants must be >= 1, got {variants!r}")
+    if not notes.strip():
+        raise HypothesisLogError("notes must name the sources of the estimate")
+    return record_attempt(
+        hypothesis=hypothesis,
+        strategy=strategy,
+        timeframe=timeframe,
+        tickers=tickers,
+        universe_source=universe_source,
+        config={"legacy_variants": variants, "sources": notes},
+        grid_cells=variants,
+        notes=notes,
+        kind="legacy",
+        path=path,
+        recorded_at=recorded_at,
+    )
 
 
 def trial_count(entries: Iterable[HypothesisEntry]) -> int:
     """Parameter variants looked at, across every strategy and idea.
 
     This is the screening-correction input: a heatmap cell is a looked-at variant.
-    It is not the budget counter — see `budget_state()`.
+    It is not the budget counter — see `budget_state()`. Legacy entries (attempts
+    made before the journal existed) are variants too, so they are counted here.
     """
-    return sum(entry.grid_cells for entry in entries if entry.kind == "idea")
+    return sum(
+        entry.grid_cells for entry in entries if entry.kind in ("idea", "legacy")
+    )
 
 
 def quarter_ideas(entries: Iterable[HypothesisEntry], day: date) -> int:
