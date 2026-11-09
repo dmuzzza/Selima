@@ -19,12 +19,24 @@ import hashlib
 import json
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 from statistics import NormalDist
 
-from src.backtest.event_study import SigmaEstimate, WindowScan
+from src.backtest.event_study import (
+    CLUSTER_BY_QUARTER,
+    DEFAULT_ICC_BOOTSTRAPS,
+    DEFAULT_PLACEBO_SEED,
+    ICC_MERGE_LAG1,
+    ICC_MIN_CLUSTERS_FOR_LAG1,
+    PLACEBO_MAX_SHIFT,
+    PLACEBO_MIN_SHIFT,
+    ClusterDecision,
+    ClusterLevel,
+    SigmaEstimate,
+    WindowScan,
+)
 from src.backtest.hypothesis_log import canonical_json
 from src.backtest.verdict import (
     FRAGILE,
@@ -80,6 +92,52 @@ class TargetModel:
 
 
 @dataclass(frozen=True)
+class PowerIccThresholds:
+    """Parameters of the placebo ICC check, fixed before the run (ADR-033).
+
+    The ticker counts are the projection points; `ticker_cap` bounds them by the
+    number of issuers whose daily candles can actually be obtained, because a
+    projection to 100 tickers when only 60 exist would mislead. `None` means the
+    cap is measured from the database at run time.
+    """
+
+    ticker_counts: tuple[int, ...] = (40, 60, 100)
+    ticker_cap: int | None = None
+    bootstraps: int = DEFAULT_ICC_BOOTSTRAPS
+    merge_lag1: float = ICC_MERGE_LAG1
+    min_shift_sessions: int = PLACEBO_MIN_SHIFT
+    max_shift_sessions: int = PLACEBO_MAX_SHIFT
+    seed: int = DEFAULT_PLACEBO_SEED
+
+    def __post_init__(self) -> None:
+        if not self.ticker_counts:
+            raise ValueError("ticker_counts must not be empty")
+        if any(count < 2 for count in self.ticker_counts):
+            raise ValueError("ticker_counts must be at least 2")
+        if self.ticker_cap is not None and self.ticker_cap < 2:
+            raise ValueError("ticker_cap must be at least 2")
+        if self.bootstraps < 100:
+            raise ValueError("bootstraps must be >= 100")
+        if not 0.0 <= self.merge_lag1 <= 1.0:
+            raise ValueError("merge_lag1 must be in [0, 1]")
+        if self.min_shift_sessions < 1:
+            raise ValueError("min_shift_sessions must be >= 1")
+        if self.max_shift_sessions < self.min_shift_sessions:
+            raise ValueError("max_shift_sessions must be >= min_shift_sessions")
+
+    def describe(self) -> dict:
+        return {
+            "ticker_counts": list(self.ticker_counts),
+            "ticker_cap": self.ticker_cap,
+            "bootstraps": self.bootstraps,
+            "merge_lag1": self.merge_lag1,
+            "min_shift_sessions": self.min_shift_sessions,
+            "max_shift_sessions": self.max_shift_sessions,
+            "seed": self.seed,
+        }
+
+
+@dataclass(frozen=True)
 class EvaluateThresholds:
     """Thresholds fixed before the first run, with a fingerprint for the report."""
 
@@ -90,6 +148,7 @@ class EvaluateThresholds:
     sealed_start: date = DEFAULT_SEALED_START
     budget: int = DEFAULT_BUDGET
     target_model: TargetModel = TargetModel()
+    power_icc: PowerIccThresholds = PowerIccThresholds()
     source: str = "defaults"
     fingerprint: str = "defaults"
 
@@ -114,6 +173,7 @@ class EvaluateThresholds:
             "sealed_start": self.sealed_start.isoformat(),
             "budget": self.budget,
             "target_model": self.target_model.describe(),
+            "power_icc": self.power_icc.describe(),
             "evaluate_version": self.fingerprint,
         }
 
@@ -132,6 +192,13 @@ def load_evaluate_thresholds(path: str | Path) -> EvaluateThresholds:
     model_raw = section.get("target_model") or {}
     if not isinstance(model_raw, Mapping):
         raise ValueError(f"{path}: 'evaluate.target_model' must be an object")
+    icc_raw = section.get("power_icc") or {}
+    if not isinstance(icc_raw, Mapping):
+        raise ValueError(f"{path}: 'evaluate.power_icc' must be an object")
+    counts_raw = icc_raw.get("ticker_counts", (40, 60, 100))
+    if not isinstance(counts_raw, Sequence) or isinstance(counts_raw, str):
+        raise ValueError(f"{path}: 'evaluate.power_icc.ticker_counts' must be a list")
+    cap_raw = icc_raw.get("ticker_cap")
     return EvaluateThresholds(
         target_edge_bps=float(section.get("target_edge_bps", DEFAULT_TARGET_EDGE_BPS)),
         power=float(section.get("power", DEFAULT_POWER)),
@@ -145,6 +212,19 @@ def load_evaluate_thresholds(path: str | Path) -> EvaluateThresholds:
             sharpe_target=float(model_raw.get("sharpe_target", DEFAULT_SHARPE_TARGET)),
             live_retention=float(model_raw.get("live_retention", DEFAULT_LIVE_RETENTION)),
             cost_floor_bps=float(model_raw.get("cost_floor_bps", DEFAULT_COST_FLOOR_BPS)),
+        ),
+        power_icc=PowerIccThresholds(
+            ticker_counts=tuple(int(value) for value in counts_raw),
+            ticker_cap=int(cap_raw) if cap_raw is not None else None,
+            bootstraps=int(icc_raw.get("bootstraps", DEFAULT_ICC_BOOTSTRAPS)),
+            merge_lag1=float(icc_raw.get("merge_lag1", ICC_MERGE_LAG1)),
+            min_shift_sessions=int(
+                icc_raw.get("min_shift_sessions", PLACEBO_MIN_SHIFT)
+            ),
+            max_shift_sessions=int(
+                icc_raw.get("max_shift_sessions", PLACEBO_MAX_SHIFT)
+            ),
+            seed=int(icc_raw.get("seed", DEFAULT_PLACEBO_SEED)),
         ),
         source=str(path),
         fingerprint=f"{version}+{_digest(section)[:12]}",
@@ -261,7 +341,7 @@ def trades_needed(
 
 def mde_from_sigma(
     sigma: float | None,
-    trades: int,
+    trades: float,
     *,
     alpha: float = 0.05,
     power: float = DEFAULT_POWER,
@@ -660,7 +740,7 @@ class PowerReport:
     main_window: int
     sealed_start: date
     sigma_mode: str = "raw"
-    cluster_by: str = "quarter"
+    cluster_by: str = CLUSTER_BY_QUARTER
     rows: tuple[PowerRow, ...] = ()
     out_of_history: int = 0
     future: int = 0
@@ -674,6 +754,8 @@ class PowerReport:
     sharpe_target: float = 1.0
     live_retention: float = 0.6
     cost_floor_bps: float = 10.0
+    icc: IccReport | None = None
+    universe_sha256: str | None = None
 
     @property
     def main_row(self) -> PowerRow | None:
@@ -683,11 +765,15 @@ class PowerReport:
 
     @property
     def measurable(self) -> bool | None:
-        """Whether the idea's own target is detectable on the clustered sample.
+        """Whether the idea's own target is detectable on this sample.
 
-        The decision uses the cluster MDE, not the iid one: events cluster by
-        season, so 129 events are fewer than 129 independent observations.
+        When the placebo ICC check ran, the gate is its decision: the clustered
+        MDE at the level the dependence actually supports. Otherwise the decision
+        falls back to counting season buckets, which is a lower bound on the
+        effective sample.
         """
+        if self.icc is not None:
+            return self.icc.gate_measurable
         row = self.main_row
         if row is None or row.mde_cluster_bps is None or row.target_idea_bps is None:
             return None
@@ -726,6 +812,292 @@ def build_power_row(
     )
 
 
+@dataclass(frozen=True)
+class ProjectionRow:
+    """What the MDE would be on a wider universe, at a fixed season structure.
+
+    New tickers add events, not seasons: dividends cluster in June-July, so the
+    number of clusters stays the same and the effective sample saturates at
+    `clusters / ICC`. That saturation is the whole point of the projection: past
+    some universe size the MDE stops falling.
+    """
+
+    tickers: int
+    events: float
+    clusters: int
+    mean_cluster_size: float
+    design_effect: float
+    effective_events: float
+    mde_bps: float | None
+    below_target: bool | None
+    capped: bool = False
+
+    def describe(self) -> dict:
+        return {
+            "tickers": self.tickers,
+            "events": _round(self.events),
+            "clusters": self.clusters,
+            "mean_cluster_size": _round(self.mean_cluster_size),
+            "design_effect": _round(self.design_effect),
+            "effective_events": _round(self.effective_events),
+            "mde_bps": _round(self.mde_bps),
+            "below_target": self.below_target,
+            "capped": self.capped,
+        }
+
+
+def project_power(
+    *,
+    sigma_bps: float | None,
+    events_per_ticker: float | None,
+    clusters: int,
+    icc: float | None,
+    ticker_counts: Sequence[int],
+    cap: int | None,
+    target_idea_bps: float | None,
+    alpha: float,
+    power: float,
+    n_trials: int,
+) -> tuple[ProjectionRow, ...]:
+    """MDE at 40/60/100 tickers, with the season count held fixed.
+
+    `events_per_ticker` comes from the current sample. The projection assumes
+    new issuers behave like the current ones and pay in the same seasons, which
+    is what the calendar shows; it is an extrapolation and the report says so.
+    A ticker count above `cap` is clipped and marked, so the table never promises
+    a universe that cannot be built.
+    """
+    if sigma_bps is None or events_per_ticker is None or events_per_ticker <= 0:
+        return ()
+    if clusters < 1:
+        return ()
+
+    rows: list[ProjectionRow] = []
+    positions: dict[int, int] = {}
+    for requested in ticker_counts:
+        tickers = min(requested, cap) if cap is not None else requested
+        capped = cap is not None and requested > cap
+        if tickers in positions:
+            position = positions[tickers]
+            if capped:
+                rows[position] = replace(rows[position], capped=True)
+            continue
+        positions[tickers] = len(rows)
+        events = events_per_ticker * tickers
+        mean_size = events / clusters
+        design_effect = max(1.0, 1.0 + (mean_size - 1.0) * max(0.0, icc or 0.0))
+        effective = events / design_effect
+        mde = mde_from_sigma(
+            sigma_bps, effective, alpha=alpha, power=power, n_trials=n_trials
+        )
+        rows.append(
+            ProjectionRow(
+                tickers=tickers,
+                events=events,
+                clusters=clusters,
+                mean_cluster_size=mean_size,
+                design_effect=design_effect,
+                effective_events=effective,
+                mde_bps=mde,
+                below_target=(
+                    None
+                    if mde is None or target_idea_bps is None
+                    else mde <= target_idea_bps
+                ),
+                capped=capped,
+            )
+        )
+    return tuple(rows)
+
+
+@dataclass(frozen=True)
+class IccScenario:
+    """MDE at one ICC value, on a fixed universe and a fixed season structure.
+
+    Three of them are printed: ICC = 0 (the gate when no level is significant),
+    the point estimate, and the upper bound of its interval. A confidence
+    interval that includes a harmful ICC is not evidence that dependence is
+    absent: it is only the absence of evidence, and the decision must show how
+    far the target survives.
+    """
+
+    by: str
+    icc_label: str
+    icc: float
+    tickers: int
+    events: float
+    clusters: int
+    mean_cluster_size: float
+    design_effect: float
+    effective_events: float
+    mde_bps: float | None
+    below_target: bool | None
+
+    def describe(self) -> dict:
+        return {
+            "by": self.by,
+            "icc_label": self.icc_label,
+            "icc": _round(self.icc),
+            "tickers": self.tickers,
+            "events": _round(self.events),
+            "clusters": self.clusters,
+            "mean_cluster_size": _round(self.mean_cluster_size),
+            "design_effect": _round(self.design_effect),
+            "effective_events": _round(self.effective_events),
+            "mde_bps": _round(self.mde_bps),
+            "below_target": self.below_target,
+        }
+
+
+def icc_ceiling(
+    *,
+    sigma_bps: float | None,
+    events: float | None,
+    clusters: int | None,
+    target_idea_bps: float | None,
+    alpha: float,
+    power: float,
+    n_trials: int,
+) -> float | None:
+    """Largest ICC at which the MDE still reaches the target.
+
+    `MDE = z * sigma * sqrt(1 + (m - 1) * ICC) / sqrt(n)`, so the target is met
+    while `ICC <= ((target * sqrt(n) / (z * sigma))^2 - 1) / (m - 1)`. A negative
+    result means the target is missed even without dependence; a value above 1
+    means dependence alone cannot make it miss.
+    """
+    if sigma_bps is None or sigma_bps <= 0 or target_idea_bps is None:
+        return None
+    if events is None or events < 2 or not clusters or clusters < 1:
+        return None
+    mean_size = events / clusters
+    if mean_size <= 1.0:
+        return None
+    z_total = _z(adjusted_alpha(alpha, n_trials)) + NormalDist().inv_cdf(power)
+    ratio = target_idea_bps * math.sqrt(events) / (z_total * sigma_bps)
+    return (ratio * ratio - 1.0) / (mean_size - 1.0)
+
+
+def icc_scenarios(
+    *,
+    level: ClusterLevel,
+    tickers: int,
+    events_per_ticker: float | None,
+    sigma_bps: float | None,
+    target_idea_bps: float | None,
+    alpha: float,
+    power: float,
+    n_trials: int,
+) -> tuple[IccScenario, ...]:
+    """The three ICC values the report prints for one cluster level."""
+    if events_per_ticker is None or events_per_ticker <= 0:
+        return ()
+    events = events_per_ticker * tickers
+    clusters = level.clusters
+    if clusters < 1:
+        return ()
+
+    candidates: list[tuple[str, float]] = [("zero", 0.0)]
+    if level.icc.icc is not None:
+        candidates.append(("point", level.icc.icc))
+    if level.icc.ci_high is not None:
+        candidates.append(("ci_high", level.icc.ci_high))
+
+    rows: list[IccScenario] = []
+    seen: set[float] = set()
+    for label, value in candidates:
+        rounded = round(value, 4)
+        if rounded in seen:
+            continue
+        seen.add(rounded)
+        mean_size = events / clusters
+        design_effect = max(1.0, 1.0 + (mean_size - 1.0) * max(0.0, value))
+        effective = events / design_effect
+        mde = mde_from_sigma(
+            sigma_bps, effective, alpha=alpha, power=power, n_trials=n_trials
+        )
+        rows.append(
+            IccScenario(
+                by=level.by,
+                icc_label=label,
+                icc=value,
+                tickers=tickers,
+                events=events,
+                clusters=clusters,
+                mean_cluster_size=mean_size,
+                design_effect=design_effect,
+                effective_events=effective,
+                mde_bps=mde,
+                below_target=(
+                    None
+                    if mde is None or target_idea_bps is None
+                    else mde <= target_idea_bps
+                ),
+            )
+        )
+    return tuple(rows)
+
+
+@dataclass(frozen=True)
+class IccReport:
+    """Dependence of the placebo windows and what it implies for the gate.
+
+    The placebo uses the same entry rules on shifted dates, so no result of the
+    hypothesis enters: this is still a power check, not an outcome check.
+    """
+
+    seed: int
+    min_shift: int
+    placebo_events: int
+    placebo_skipped: int
+    levels: tuple[ClusterLevel, ...]
+    decision: ClusterDecision
+    gate_mde_bps: float | None
+    gate_measurable: bool | None
+    target_idea_bps: float | None
+    gate_tickers: int | None = None
+    current_mde_bps: float | None = None
+    current_tickers: int | None = None
+    beyond_max_shift: int = 0
+    max_shift: int = PLACEBO_MAX_SHIFT
+    projection: tuple[ProjectionRow, ...] = ()
+    scenarios: tuple[IccScenario, ...] = ()
+    ceilings: Mapping[str, float | None] = field(default_factory=dict)
+    ticker_cap: int | None = None
+    ticker_cap_source: str = "not measured"
+    available_now: int | None = None
+
+    @property
+    def gate_level(self) -> str:
+        return self.decision.level
+
+    def describe(self) -> dict:
+        return {
+            "seed": self.seed,
+            "min_shift_sessions": self.min_shift,
+            "max_shift_sessions": self.max_shift,
+            "beyond_max_shift": self.beyond_max_shift,
+            "placebo_events": self.placebo_events,
+            "placebo_skipped": self.placebo_skipped,
+            "levels": [level.describe() for level in self.levels],
+            "decision": self.decision.describe(),
+            "gate_mde_bps": _round(self.gate_mde_bps),
+            "gate_tickers": self.gate_tickers,
+            "gate_measurable": self.gate_measurable,
+            "current_mde_bps": _round(self.current_mde_bps),
+            "current_tickers": self.current_tickers,
+            "target_idea_bps": _round(self.target_idea_bps),
+            "projection": [row.describe() for row in self.projection],
+            "scenarios": [row.describe() for row in self.scenarios],
+            "icc_ceiling": {
+                key: _round(value) for key, value in self.ceilings.items()
+            },
+            "ticker_cap": self.ticker_cap,
+            "ticker_cap_source": self.ticker_cap_source,
+            "available_now": self.available_now,
+        }
+
+
 def render_power_report(report: PowerReport) -> str:
     """Markdown for the pre-check; explicitly not a verdict."""
     lines: list[str] = [
@@ -733,6 +1105,10 @@ def render_power_report(report: PowerReport) -> str:
         (
             f"Tickers: {len(report.tickers)} | events: {report.events} of "
             f"{report.total_events} in the calendar"
+        ),
+        (
+            f"Universe: {report.universe_sha256[:16] if report.universe_sha256 else 'ad hoc, not frozen'}"
+            + ("" if report.universe_sha256 else " (a manual list is not a fixed universe)")
         ),
         (
             f"Ideas this quarter: not read, not spent — this is a pre-check, "
@@ -796,9 +1172,9 @@ def render_power_report(report: PowerReport) -> str:
     lines.append("")
     lines.append(
         f"`MDE` uses the event count as if the events were independent; "
-        f"`MDE clust` uses the number of {report.cluster_by}s instead. Events cluster "
-        "by season (most issuers pay in June-July), so the clustered number is the "
-        "honest one and the decision uses it (ADR-033)."
+        f"`MDE clust` counts each {report.cluster_by} once. Events cluster by season "
+        "(most issuers pay in June-July), so the clustered number is the pessimistic "
+        "bound; which one enters the decision is set by the placebo ICC below."
     )
     lines.append("")
     measurable = report.measurable
@@ -806,18 +1182,47 @@ def render_power_report(report: PowerReport) -> str:
         lines.append("**Cannot say:** too few events for an MDE.")
     elif measurable:
         lines.append(
-            "**Measurable:** the clustered MDE is at or below the idea target, so "
-            "the idea can be tested without changing the design."
+            "**Measurable:** the gate MDE is at or below the idea target, so the idea "
+            "can be tested without changing the design."
         )
+        if report.icc is not None:
+            # The year level has about seven clusters: its ceiling is computed from a
+            # handful of points and must not set the headline bound.
+            interpretable = {
+                level.by for level in report.icc.levels if level.lag1_interpretable
+            }
+            ceilings = {
+                key: value
+                for key, value in report.icc.ceilings.items()
+                if value is not None and key in interpretable
+            }
+            if ceilings:
+                # The tightest level is the honest one: a wider universe puts about
+                # 20 events into a quarter, where a shock outlives a month.
+                tightest = min(ceilings, key=lambda key: ceilings[key])
+                lines.append(
+                    f"This holds while the {tightest} ICC stays below "
+                    f"{ceilings[tightest]:.2f} (the tightest interpretable level). "
+                    "Re-measure the ICC on the widened universe before the evaluate "
+                    "run: the interval is still wide, and its upper bound does not "
+                    "exclude failure."
+                )
     else:
         main = report.main_row
+        gate_mde = report.icc.gate_mde_bps if report.icc else None
+        if gate_mde is None and main is not None:
+            gate_mde = main.mde_cluster_bps
+        target = main.target_idea_bps if main else None
         lines.append(
-            f"**Not measurable:** the clustered MDE ({_bps(main.mde_cluster_bps) if main else 'n/a'} "
-            f"bps) is above the idea target ({_bps(main.target_idea_bps) if main else 'n/a'} bps). "
-            "Running the idea would spend a slot on a sample that cannot answer the "
-            "question; widen the universe or change the design first."
+            f"**Not measurable:** the gate MDE ({_bps(gate_mde)} bps) is above the "
+            f"idea target ({_bps(target)} bps). Running the idea would spend a slot "
+            "on a sample that cannot answer the question; widen the universe or "
+            "change the design first."
         )
     lines.append("")
+
+    if report.icc is not None:
+        lines.extend(_render_icc(report.icc))
 
     lines.append("## Economic scale")
     lines.append("")
@@ -883,6 +1288,169 @@ def render_power_report(report: PowerReport) -> str:
     lines.append(f"evaluate {report.evaluate_fingerprint}")
     lines.append("")
     return "\n".join(lines)
+
+
+def _render_icc(report: IccReport) -> list[str]:
+    """ICC and projection sections; no mean return appears here."""
+    lines: list[str] = []
+    lines.append("## ICC on placebo windows")
+    lines.append("")
+    lines.append("```")
+    lines.append(
+        f"placebo windows {report.placebo_events:>4} "
+        f"(skipped {report.placebo_skipped}) | seed {report.seed} | "
+        f"shift {report.min_shift}-{report.max_shift} sessions | "
+        f"beyond max shift {report.beyond_max_shift}"
+    )
+    lines.append(f"{'level':>8} {'clusters':>9} {'ICC':>7} {'CI 95%':>16} {'lag-1':>7}")
+    for level in report.levels:
+        estimate = level.icc
+        interval = (
+            "n/a"
+            if estimate.ci_low is None or estimate.ci_high is None
+            else f"[{estimate.ci_low:+.2f}; {estimate.ci_high:+.2f}]"
+        )
+        lines.append(
+            f"{level.by:>8} {level.clusters:>9} {_signed(estimate.icc):>7} "
+            f"{interval:>16} {_signed(level.lag1):>7}"
+        )
+    lines.append("```")
+    lines.append("")
+    lines.append(
+        "Placebo windows keep the real entry rule and are shifted off the real exit "
+        f"date by a random {report.min_shift}-{report.max_shift} sessions, so the "
+        "calendar structure and the size of each season stay as they are. No result "
+        "of the hypothesis enters: the same check would give the same numbers on an "
+        "unrelated event idea."
+    )
+    if report.beyond_max_shift:
+        lines.append(
+            f"{report.beyond_max_shift} placebo windows had no legal shift inside the "
+            "range and moved further: for them the season is not preserved."
+        )
+    thin = [level.by for level in report.levels if level.clusters < ICC_MIN_CLUSTERS_FOR_LAG1]
+    if thin:
+        lines.append(
+            f"Lag-1 is not interpreted for {', '.join(thin)}: with "
+            f"{ICC_MIN_CLUSTERS_FOR_LAG1} clusters or fewer the estimate is noise, not "
+            "a signal."
+        )
+    lines.append("")
+    lines.append(
+        f"**Gate level: {report.gate_level}** — {report.decision.reason}. "
+        "The coarsest plausible scale is the safe direction: a finer bucket "
+        "understates the variance when a common shock lives longer than the bucket "
+        "(ADR-033)."
+    )
+    if report.gate_mde_bps is not None:
+        lines.append("")
+        lines.append(
+            f"Gate MDE {_bps(report.gate_mde_bps)} bps at {report.gate_tickers} "
+            f"tickers against the idea target {_bps(report.target_idea_bps)} bps; at "
+            f"the current {report.current_tickers} tickers it is "
+            f"{_bps(report.current_mde_bps)} bps. The gate answers 'load tickers or "
+            "close the idea', so it uses the widest universe the cap allows."
+        )
+    lines.append("")
+
+    if report.projection:
+        lines.append("## Projection")
+        lines.append("")
+        lines.append("```")
+        lines.append(
+            f"{'tickers':>7} {'events':>7} {'clusters':>9} {'per season':>11} "
+            f"{'deff':>6} {'n eff':>7} {'MDE':>7} {'target':>7}"
+        )
+        for row in report.projection:
+            marker = "*" if row.capped else " "
+            lines.append(
+                f"{row.tickers:>6}{marker} {row.events:>7.0f} {row.clusters:>9} "
+                f"{row.mean_cluster_size:>11.1f} {row.design_effect:>6.2f} "
+                f"{row.effective_events:>7.1f} {_bps(row.mde_bps):>7} "
+                f"{'yes' if row.below_target else 'no':>7}"
+            )
+        lines.append("```")
+        lines.append("")
+        lines.append(
+            "New tickers add events, not seasons: dividends pile up in June-July, so "
+            "the cluster count stays fixed and the effective sample saturates at "
+            "`clusters / ICC`. Past that point a wider universe stops helping, which "
+            "is exactly what the projection shows."
+        )
+        lines.append("")
+        cap = report.ticker_cap
+        if cap is not None:
+            lines.append(
+                f"Ticker cap {cap} ({report.ticker_cap_source}); "
+                f"{report.available_now if report.available_now is not None else 'n/a'} "
+                "issuers already have usable daily candles. Rows marked `*` are "
+                "clipped to the cap: a projection above it would promise a universe "
+                "that cannot be built."
+            )
+        else:
+            lines.append(
+                "Ticker cap is not set: the projection is not bounded by how many "
+                "issuers actually have daily candles, so treat the last row as an "
+                "upper bound."
+            )
+        lines.append("")
+        lines.append(
+            "The projection assumes new issuers behave like the current ones and pay "
+            "in the same seasons. It is an extrapolation from the placebo sample, not "
+            "a measurement."
+        )
+        lines.append("")
+
+    if report.scenarios:
+        lines.append("## Sensitivity to ICC")
+        lines.append("")
+        lines.append(
+            "A wide interval that includes a harmful ICC is not evidence that "
+            "dependence is absent — only that the sample cannot rule it out. The same "
+            "events on a wider universe put more events into one season, so an ICC "
+            "that is harmless at 20 tickers can bite at 76."
+        )
+        lines.append("")
+        lines.append("```")
+        lines.append(
+            f"{'level':>8} {'ICC':>7} {'value':>7} {'per season':>11} "
+            f"{'deff':>6} {'n eff':>7} {'MDE':>7} {'target':>7}"
+        )
+        for scenario in report.scenarios:
+            lines.append(
+                f"{scenario.by:>8} {scenario.icc_label:>7} {scenario.icc:>+7.2f} "
+                f"{scenario.mean_cluster_size:>11.1f} {scenario.design_effect:>6.2f} "
+                f"{scenario.effective_events:>7.1f} {_bps(scenario.mde_bps):>7} "
+                f"{'ok' if scenario.below_target else 'above':>7}"
+            )
+        lines.append("```")
+        lines.append("")
+        for by, ceiling in report.ceilings.items():
+            if ceiling is None:
+                continue
+            if ceiling < 0:
+                lines.append(
+                    f"- {by}: the target is missed even at ICC 0, so dependence is "
+                    "not the binding constraint."
+                )
+            else:
+                lines.append(
+                    f"- {by}: the target survives while the ICC stays below "
+                    f"{ceiling:.2f}."
+                )
+        if report.ceilings:
+            lines.append("")
+        lines.append(
+            "Re-measure the ICC on the widened universe before the evaluate run: the "
+            "interval narrows with more clusters, and a point estimate is not a "
+            "guarantee."
+        )
+        lines.append("")
+    return lines
+
+
+def _signed(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:+.2f}"
 
 
 def _bps(value: float | None) -> str:

@@ -79,7 +79,9 @@ p_selima_v8.1/
 │   ├── dividends.json                 [C] дивидендный календарь: `last_buy_date`, `dividend_gross`,
 │   │                                      `payouts` (слитые выплаты), `annotations` (status/note/
 │   │                                      reference), `source: api|manual`; version + sha256 (ADR-025)
-│   └── tp_sl.json                     [C] TP/SL по стратегиям + version/sha256; нет ключа — ошибка (ADR-019)
+│   ├── tp_sl.json                     [C] TP/SL по стратегиям + version/sha256; нет ключа — ошибка (ADR-019)
+│   └── power_universe.json            [C] зафиксированная вселенная событийной идеи: правило,
+│                                          список тикеров, sha256 списка (ADR-033)
 │
 ├── src/
 │   ├── __init__.py                    пакет
@@ -161,7 +163,9 @@ p_selima_v8.1/
 │   │   │                                  Markdown-отчёт (ADR-032)
 │   │   ├── event_study.py             [C] событийная мощность: окна `D−N…D` из дивидендного
 │   │   │                                  календаря, фильтры (история, sealed, declared_date,
-│   │   │                                  not_paid), безусловная σ скользящих доходностей (ADR-033)
+│   │   │                                  not_paid), безусловная σ скользящих доходностей,
+│   │   │                                  placebo-окна (сдвиг 20–60 сессий), ICC по сезонам,
+│   │   │                                  выбор уровня кластеризации (ADR-033)
 │   │   ├── walk_forward.py            [C] окна train/test, отбор параметров на train, OOS-прогон (ADR-015)
 │   │   ├── null_test.py               [C] контроль движка: случайные входы должны терять издержки (ADR-020)
 │   │   ├── heatmap.py                 [C] сетка TP/SL: плато или одна точка, пороги из validation.json (ADR-021)
@@ -332,7 +336,7 @@ PostgreSQL (`PgLiveTradeRepository` / `PgStopOrderRepository`). SQLite-репо�
 | `Dividends` (`dividends.py`) | `config/dividends.json`, `config/validation.json` (секция `dividends`), свечи | `portfolio.py`, `scripts/portfolio_run.py`, `scripts/verdict.py` |
 | `Verdict` (`verdict.py`) | `IntervalResult`-входы от `portfolio.py`, `heatmap.py`, `null_test.py`, `config/validation.json` (секция `verdict`) | `scripts/verdict.py` |
 | `Evaluate` (`evaluate.py`) | `verdict.py`, `hypothesis_log.py`, `config/validation.json` (секция `evaluate`) | `scripts/evaluate.py` |
-| `EventStudy` (`event_study.py`) | `dividends.py` (`find_ex_bar`), `config/dividends.json`, свечи, `config/validation.json` (секция `evaluate`) | `scripts/evaluate.py --power-only` |
+| `EventStudy` (`event_study.py`) | `dividends.py` (`find_ex_bar`), `config/dividends.json`, свечи, `config/validation.json` (секция `evaluate`) | `scripts/evaluate.py --power-only [--placebo-icc]` |
 | `Weekend` (`weekend.py`) | `PooledTrade`/`block_bootstrap` из `portfolio.py`, свечи, `config/validation.json` (секция `weekend` + `min_sample_trades`) | `scripts/weekend_audit.py` |
 | `HypothesisLog` (`hypothesis_log.py`) | `journal/hypotheses.jsonl` | `scripts/evaluate.py` (T2-25), отчёты |
 | `CostModel` (`costs.py`) | `config/commissions.py`, `config/costs.json` | `TradeSimulator`, `scripts/*` |

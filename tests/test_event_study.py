@@ -7,6 +7,9 @@ the idea would trade, and an eligibility filter that silently drops events.
 
 from __future__ import annotations
 
+import json
+import math
+import random
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 
@@ -15,9 +18,13 @@ import pytest
 from scripts.evaluate import parse_windows
 from src.backtest.dividends import DividendEvent
 from src.backtest.evaluate import (
+    IccReport,
     PowerReport,
     build_power_row,
+    icc_ceiling,
+    icc_scenarios,
     mde_from_sigma,
+    project_power,
     render_power_report,
     target_for_trades,
 )
@@ -25,16 +32,30 @@ from src.backtest.event_study import (
     CLUSTER_BY_MONTH,
     CLUSTER_BY_QUARTER,
     CLUSTER_BY_YEAR,
+    PLACEBO_STATUS,
+    ClusterLevel,
+    IccEstimate,
     basket_index,
+    basket_totals,
+    choose_cluster_level,
     cluster_count,
     cluster_design_effect,
+    cluster_groups,
     cluster_key,
+    cluster_means,
+    icc_bootstrap_ci,
+    icc_oneway,
+    lag1_autocorrelation,
+    load_power_universe,
     median_sigma_bps,
+    placebo_windows,
     rolling_returns_bps,
     scan_event_windows,
     standard_error_bps,
     unconditional_excess_sigma,
     unconditional_sigma,
+    universe_sha256,
+    window_excess_bps,
     window_return_bps,
 )
 from src.market_data.models import Candle
@@ -615,5 +636,618 @@ def test_parse_windows_sorts_and_validates():
         parse_windows("0")
     with pytest.raises(SystemExit):
         parse_windows(" , ")
+
+
+def test_excess_window_return_removes_the_basket_move():
+    """Two identical series: the basket moves with the ticker, nothing is left."""
+    same = series(length=40)
+    totals = basket_totals({"AAA": same, "BBB": same})
+    window = one_window(same, index=20, ticker="AAA")
+
+    assert window_excess_bps(same, window, totals) == pytest.approx(0.0, abs=1e-9)
+    assert window_return_bps(same, window) != pytest.approx(0.0, abs=1e-9)
+
+
+# ── placebo windows ────────────────────────────────────────────────────────
+
+
+def one_window(candles: list[Candle], index: int = 150, ticker: str = "SBER"):
+    scan = scan_event_windows(
+        {ticker: candles},
+        [event(last_buy=bar_date(candles, index), ticker=ticker)],
+        window_sessions=10,
+        sealed_start=SEALED,
+    )
+    assert scan.events == 1
+    return scan.windows[0]
+
+
+def test_placebo_window_is_shifted_off_the_real_date():
+    candles = series(length=200)
+    real = one_window(candles)
+
+    placebo = placebo_windows(
+        {"SBER": candles},
+        [real],
+        window_sessions=10,
+        sealed_start=SEALED,
+        min_shift=20,
+        seed=7,
+    )
+
+    assert placebo.events == 1
+    window = placebo.windows[0]
+    assert abs(window.exit_index - real.exit_index) >= 20
+    assert window.entry_index == window.exit_index - 10
+    assert window.status == PLACEBO_STATUS
+
+
+def test_placebo_window_never_overlaps_the_real_window():
+    """|shift| >= 20 with a 10-session window leaves a gap in both directions."""
+    candles = series(length=200)
+    real = one_window(candles)
+
+    for seed in range(20):
+        placebo = placebo_windows(
+            {"SBER": candles},
+            [real],
+            window_sessions=10,
+            sealed_start=SEALED,
+            min_shift=20,
+            seed=seed,
+        )
+        window = placebo.windows[0]
+        assert window.exit_index <= real.entry_index - 10 or window.entry_index >= real.exit_index + 10
+
+
+def test_placebo_is_deterministic_for_a_seed_and_moves_for_another():
+    candles = series(length=400)
+    real = one_window(candles, index=200)
+
+    first = placebo_windows(
+        {"SBER": candles},
+        [real],
+        window_sessions=10,
+        sealed_start=SEALED,
+        min_shift=20,
+        seed=11,
+    )
+    again = placebo_windows(
+        {"SBER": candles},
+        [real],
+        window_sessions=10,
+        sealed_start=SEALED,
+        min_shift=20,
+        seed=11,
+    )
+    other = placebo_windows(
+        {"SBER": candles},
+        [real],
+        window_sessions=10,
+        sealed_start=SEALED,
+        min_shift=20,
+        seed=12,
+    )
+
+    assert first.windows[0].exit_index == again.windows[0].exit_index
+    assert first.windows[0].exit_index != other.windows[0].exit_index
+
+
+def test_placebo_keeps_the_window_inside_history_and_before_the_sealed_start():
+    candles = series(length=120)
+    real = one_window(candles, index=60)
+    cutoff = bar_date(candles, 100)
+
+    for seed in range(20):
+        placebo = placebo_windows(
+            {"SBER": candles},
+            [real],
+            window_sessions=10,
+            sealed_start=cutoff,
+            min_shift=20,
+            seed=seed,
+        )
+        window = placebo.windows[0]
+        assert 0 <= window.entry_index < window.exit_index < len(candles)
+        assert window.exit_time.date() < cutoff
+
+
+def test_placebo_counts_a_window_it_cannot_place():
+    candles = series(length=30)
+    real = one_window(candles, index=10)
+
+    placebo = placebo_windows(
+        {"SBER": candles},
+        [real],
+        window_sessions=10,
+        sealed_start=SEALED,
+        min_shift=20,
+        seed=3,
+    )
+
+    assert placebo.events == 0
+    assert placebo.skipped == 1
+
+
+def test_placebo_rejects_a_bad_window_length():
+    with pytest.raises(ValueError):
+        placebo_windows(
+            {"SBER": series()},
+            [],
+            window_sessions=0,
+            sealed_start=SEALED,
+        )
+
+
+# ── intra-cluster correlation ──────────────────────────────────────────────
+
+
+def synthetic_clusters(
+    icc: float, *, clusters: int = 40, size: int = 10, seed: int = 3
+) -> list[list[float]]:
+    """One-way random effects: y = a_i + e_ij, ICC = tau^2 / (tau^2 + sigma^2)."""
+    rng = random.Random(seed)
+    between = math.sqrt(icc)
+    within = math.sqrt(1.0 - icc)
+    groups: list[list[float]] = []
+    for _ in range(clusters):
+        effect = rng.gauss(0.0, between)
+        groups.append([effect + rng.gauss(0.0, within) for _ in range(size)])
+    return groups
+
+
+def test_icc_recovers_a_known_intra_cluster_correlation():
+    estimate = icc_oneway(synthetic_clusters(0.25))
+
+    assert estimate.icc == pytest.approx(0.25, abs=0.10)
+    assert estimate.clusters == 40
+    assert estimate.observations == 400
+
+
+def test_icc_is_near_zero_for_independent_values():
+    estimate = icc_oneway(synthetic_clusters(0.0))
+
+    assert estimate.icc is not None
+    assert abs(estimate.icc) < 0.10
+
+
+def test_icc_uses_the_unbalanced_cluster_correction():
+    """Hand calculation with m0, not the balanced-design formula."""
+    groups = [[0.0, 2.0], [10.0, 12.0, 14.0]]
+
+    estimate = icc_oneway(groups)
+
+    assert estimate.clusters == 2
+    assert estimate.observations == 5
+    assert estimate.mean_cluster_size == pytest.approx(2.5)
+    assert estimate.icc == pytest.approx(0.9466, abs=1e-3)
+
+
+def test_icc_needs_two_clusters_and_within_variance():
+    assert icc_oneway([[1.0, 2.0]]).icc is None
+    assert icc_oneway([[1.0], [2.0]]).icc is None
+
+
+def test_icc_interval_excludes_zero_for_clustered_values():
+    low, high = icc_bootstrap_ci(synthetic_clusters(0.4), samples=300, seed=5)
+
+    assert low is not None and high is not None
+    assert low > 0.0
+    assert low < high
+
+
+def test_icc_interval_includes_zero_for_independent_values():
+    low, _ = icc_bootstrap_ci(synthetic_clusters(0.0), samples=300, seed=5)
+
+    assert low is not None
+    assert low <= 0.0
+
+
+def test_icc_bootstrap_rejects_a_tiny_sample_count():
+    with pytest.raises(ValueError):
+        icc_bootstrap_ci(synthetic_clusters(0.2), samples=10)
+
+
+def test_cluster_means_are_chronological_and_lag1_detects_a_trend():
+    values = [1.0, 2.0, 3.0, 4.0]
+
+    assert cluster_means([[1.0], [2.0], [3.0], [4.0]]) == [1.0, 2.0, 3.0, 4.0]
+    assert lag1_autocorrelation(values) == pytest.approx(1.0)
+    assert lag1_autocorrelation([1.0, -1.0, 1.0, -1.0]) == pytest.approx(-1.0)
+    assert lag1_autocorrelation([1.0, 2.0]) is None
+
+
+def test_cluster_groups_keep_the_season_order():
+    candles = series(length=400)
+    windows = []
+    values = []
+    for index in (60, 200, 320):
+        window = one_window(candles, index=index)
+        windows.append(window)
+        values.append(float(index))
+
+    groups = cluster_groups(windows, values, CLUSTER_BY_QUARTER)
+
+    assert len(groups) == 3
+    assert groups[0] == [60.0]
+
+
+def level(by: str, *, icc: float, low: float, high: float, lag1: float | None) -> ClusterLevel:
+    return ClusterLevel(
+        by=by,
+        icc=IccEstimate(
+            icc=icc,
+            clusters=10,
+            observations=100,
+            mean_cluster_size=10.0,
+            ci_low=low,
+            ci_high=high,
+        ),
+        lag1=lag1,
+    )
+
+
+def test_gate_uses_the_coarsest_significant_level():
+    decision = choose_cluster_level(
+        [
+            level(CLUSTER_BY_MONTH, icc=0.2, low=0.05, high=0.35, lag1=0.1),
+            level(CLUSTER_BY_QUARTER, icc=0.3, low=0.10, high=0.50, lag1=0.1),
+            level(CLUSTER_BY_YEAR, icc=0.4, low=-0.10, high=0.70, lag1=0.1),
+        ]
+    )
+
+    assert decision.level == CLUSTER_BY_QUARTER
+    assert decision.merged is False
+
+
+def test_gate_falls_back_to_the_finest_level_without_significance():
+    decision = choose_cluster_level(
+        [
+            level(CLUSTER_BY_MONTH, icc=0.05, low=-0.05, high=0.15, lag1=0.1),
+            level(CLUSTER_BY_QUARTER, icc=0.10, low=-0.10, high=0.30, lag1=0.1),
+            level(CLUSTER_BY_YEAR, icc=0.20, low=-0.30, high=0.60, lag1=0.1),
+        ]
+    )
+
+    assert decision.level == CLUSTER_BY_MONTH
+
+
+def test_positive_adjacent_correlation_moves_the_gate_one_level_coarser():
+    """A shock that outlives a month is not removed by a monthly bucket."""
+    decision = choose_cluster_level(
+        [
+            level(CLUSTER_BY_MONTH, icc=0.25, low=0.05, high=0.45, lag1=0.45),
+            level(CLUSTER_BY_QUARTER, icc=0.10, low=-0.05, high=0.25, lag1=0.1),
+            level(CLUSTER_BY_YEAR, icc=0.20, low=-0.20, high=0.60, lag1=0.1),
+        ]
+    )
+
+    assert decision.level == CLUSTER_BY_QUARTER
+    assert decision.merged is True
+
+
+def test_merge_rule_walks_from_quarter_to_year():
+    decision = choose_cluster_level(
+        [
+            level(CLUSTER_BY_MONTH, icc=0.25, low=-0.05, high=0.45, lag1=0.1),
+            level(CLUSTER_BY_QUARTER, icc=0.30, low=0.10, high=0.50, lag1=0.40),
+            level(CLUSTER_BY_YEAR, icc=0.20, low=-0.20, high=0.60, lag1=0.1),
+        ]
+    )
+
+    assert decision.level == CLUSTER_BY_YEAR
+    assert decision.merged is True
+
+
+def test_merge_stops_at_the_coarsest_level():
+    decision = choose_cluster_level(
+        [
+            level(CLUSTER_BY_MONTH, icc=0.1, low=-0.1, high=0.3, lag1=0.1),
+            level(CLUSTER_BY_QUARTER, icc=0.1, low=-0.1, high=0.3, lag1=0.1),
+            level(CLUSTER_BY_YEAR, icc=0.4, low=0.10, high=0.70, lag1=0.9),
+        ]
+    )
+
+    assert decision.level == CLUSTER_BY_YEAR
+
+
+# ── projection ─────────────────────────────────────────────────────────────
+
+
+def projection(
+    *,
+    sigma_bps: float | None = 514.0,
+    events_per_ticker: float | None = 6.45,
+    clusters: int = 24,
+    icc: float | None = 0.3,
+    ticker_counts: tuple[int, ...] = (40, 60, 100),
+    cap: int | None = None,
+    target_idea_bps: float | None = 182.0,
+):
+    return project_power(
+        sigma_bps=sigma_bps,
+        events_per_ticker=events_per_ticker,
+        clusters=clusters,
+        icc=icc,
+        ticker_counts=ticker_counts,
+        cap=cap,
+        target_idea_bps=target_idea_bps,
+        alpha=0.05,
+        power=0.80,
+        n_trials=82,
+    )
+
+
+def test_projection_falls_as_the_universe_grows():
+    rows = projection()
+
+    assert [row.tickers for row in rows] == [40, 60, 100]
+    assert rows[0].mde_bps > rows[1].mde_bps > rows[2].mde_bps
+
+
+def test_projection_saturates_at_the_season_count():
+    """With a fixed cluster count the effective sample tends to clusters / ICC."""
+    rows = projection(icc=0.5)
+
+    assert rows[-1].effective_events < 24 / 0.5 * 1.05
+    assert rows[-1].design_effect > rows[0].design_effect
+
+
+def test_projection_is_clipped_by_the_ticker_cap():
+    rows = projection(cap=60)
+
+    assert [row.tickers for row in rows] == [40, 60]
+    assert rows[-1].capped is True
+
+
+def test_projection_without_dependence_matches_the_event_count():
+    rows = projection(icc=0.0)
+
+    assert rows[0].effective_events == pytest.approx(rows[0].events)
+
+
+def test_projection_needs_a_sample():
+    assert projection(sigma_bps=None) == ()
+    assert projection(events_per_ticker=None) == ()
+
+
+def test_projection_marks_a_target_it_can_reach():
+    rows = projection(icc=0.0, target_idea_bps=10_000.0)
+
+    assert all(row.below_target for row in rows)
+
+
+# ── ICC sensitivity and ceiling ────────────────────────────────────────────
+
+
+def test_icc_ceiling_matches_the_hand_calculation():
+    """MDE = z*sigma*sqrt(1+(m-1)*ICC)/sqrt(n); solve for ICC at MDE == target."""
+    events, clusters = 490.0, 24
+    sigma, target = 514.4, 182.3
+    z_total = 4.27  # z(1 - 0.05/82/2) + z(0.8), the values the run uses
+
+    ceiling = icc_ceiling(
+        sigma_bps=sigma,
+        events=events,
+        clusters=clusters,
+        target_idea_bps=target,
+        alpha=0.05,
+        power=0.80,
+        n_trials=82,
+    )
+
+    assert ceiling is not None
+    expected = ((target * math.sqrt(events) / (z_total * sigma)) ** 2 - 1) / (
+        events / clusters - 1
+    )
+    assert ceiling == pytest.approx(expected, rel=0.02)
+
+
+def test_icc_ceiling_is_negative_when_the_target_is_missed_without_dependence():
+    ceiling = icc_ceiling(
+        sigma_bps=514.0,
+        events=100.0,
+        clusters=24,
+        target_idea_bps=182.0,
+        alpha=0.05,
+        power=0.80,
+        n_trials=82,
+    )
+
+    assert ceiling is not None and ceiling < 0
+
+
+def test_icc_ceiling_needs_a_sample():
+    assert (
+        icc_ceiling(
+            sigma_bps=None,
+            events=490.0,
+            clusters=24,
+            target_idea_bps=182.0,
+            alpha=0.05,
+            power=0.80,
+            n_trials=1,
+        )
+        is None
+    )
+
+
+def test_icc_scenarios_prints_zero_point_and_upper_bound():
+    clustered = ClusterLevel(
+        by=CLUSTER_BY_QUARTER,
+        icc=IccEstimate(
+            icc=0.08,
+            clusters=24,
+            observations=129,
+            mean_cluster_size=5.4,
+            ci_low=-0.07,
+            ci_high=0.19,
+        ),
+    )
+
+    rows = icc_scenarios(
+        level=clustered,
+        tickers=76,
+        events_per_ticker=6.45,
+        sigma_bps=514.0,
+        target_idea_bps=182.0,
+        alpha=0.05,
+        power=0.80,
+        n_trials=82,
+    )
+
+    assert [row.icc_label for row in rows] == ["zero", "point", "ci_high"]
+    assert rows[0].icc == 0.0
+    zero, point, high = rows[0].mde_bps, rows[1].mde_bps, rows[2].mde_bps
+    assert zero is not None and point is not None and high is not None
+    assert zero < point < high
+
+
+def test_icc_scenarios_grows_the_design_effect_with_the_universe():
+    clustered = ClusterLevel(
+        by=CLUSTER_BY_QUARTER,
+        icc=IccEstimate(
+            icc=0.19, clusters=24, observations=129, mean_cluster_size=5.4, ci_high=0.19
+        ),
+    )
+
+    small = icc_scenarios(
+        level=clustered,
+        tickers=20,
+        events_per_ticker=6.45,
+        sigma_bps=514.0,
+        target_idea_bps=182.0,
+        alpha=0.05,
+        power=0.80,
+        n_trials=82,
+    )
+    large = icc_scenarios(
+        level=clustered,
+        tickers=76,
+        events_per_ticker=6.45,
+        sigma_bps=514.0,
+        target_idea_bps=182.0,
+        alpha=0.05,
+        power=0.80,
+        n_trials=82,
+    )
+
+    # The design effect grows with the universe, but the event count grows faster:
+    # the MDE still falls, just less than it would at ICC 0.
+    assert large[-1].design_effect > small[-1].design_effect
+    assert large[-1].effective_events > small[-1].effective_events
+    large_mde, small_mde = large[-1].mde_bps, small[-1].mde_bps
+    assert large_mde is not None and small_mde is not None
+    assert large_mde < small_mde
+
+
+# ── frozen event universe ──────────────────────────────────────────────────
+
+
+def test_universe_hash_ignores_order_case_and_duplicates():
+    first = universe_sha256(["SBER", "GAZP"])
+    second = universe_sha256(["gazp", " SBER ", "SBER"])
+
+    assert first == second
+    assert first != universe_sha256(["SBER"])
+
+
+def test_universe_loader_refuses_an_edited_list(tmp_path):
+    path = tmp_path / "universe.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": "1",
+                "rule": "liquid payers",
+                "tickers": ["SBER", "GAZP"],
+                "sha256": universe_sha256(["SBER", "GAZP"]),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    universe = load_power_universe(path)
+    assert universe.tickers == ("SBER", "GAZP")
+
+    path.write_text(
+        json.dumps(
+            {
+                "version": "1",
+                "rule": "liquid payers",
+                "tickers": ["SBER", "GAZP", "LKOH"],
+                "sha256": universe_sha256(["SBER", "GAZP"]),
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="new attempt"):
+        load_power_universe(path)
+
+
+def test_universe_loader_requires_a_hash(tmp_path):
+    path = tmp_path / "universe.json"
+    path.write_text(json.dumps({"tickers": ["SBER"]}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="sha256"):
+        load_power_universe(path)
+
+
+# ── report with the ICC section ────────────────────────────────────────────
+
+
+def make_icc_report(gate_mde: float = 448.0, target: float = 182.0) -> IccReport:
+    levels = (
+        level(CLUSTER_BY_MONTH, icc=0.2, low=0.05, high=0.35, lag1=0.1),
+        level(CLUSTER_BY_QUARTER, icc=0.3, low=0.10, high=0.50, lag1=0.1),
+        level(CLUSTER_BY_YEAR, icc=0.4, low=-0.10, high=0.70, lag1=0.1),
+    )
+    return IccReport(
+        seed=20261109,
+        min_shift=20,
+        placebo_events=129,
+        placebo_skipped=0,
+        levels=levels,
+        decision=choose_cluster_level(levels),
+        gate_mde_bps=gate_mde,
+        gate_measurable=gate_mde <= target,
+        target_idea_bps=target,
+        gate_tickers=60,
+        current_mde_bps=gate_mde + 40.0,
+        current_tickers=20,
+        projection=projection(),
+        ticker_cap=60,
+        ticker_cap_source="set in config/validation.json",
+        available_now=36,
+    )
+
+
+def test_report_prints_the_icc_section_and_the_gate():
+    report = make_report()
+    report = replace(report, icc=make_icc_report())
+    text = render_power_report(report)
+
+    assert "## ICC on placebo windows" in text
+    assert "Gate level: quarter" in text
+    assert "## Projection" in text
+    assert "Ticker cap 60" in text
+    assert "448 bps" in text and "182 bps" in text
+
+
+def test_report_uses_the_gate_mde_not_the_cluster_count():
+    report = replace(make_report(mde_cluster=100.0), icc=make_icc_report(gate_mde=448.0))
+
+    assert report.measurable is False
+
+
+def test_icc_section_prints_no_mean_return():
+    report = replace(make_report(), icc=make_icc_report())
+    text = render_power_report(report)
+    section = text.split("## ICC on placebo windows")[1].split("## Economic scale")[0]
+    table = section.split("```")[1]
+
+    assert "+99" not in section and "+185" not in section
+    assert "bps" not in table
+    assert "mean" not in table.lower()
+
 
 

@@ -174,6 +174,7 @@ p_selima_v8.1/
 | `evaluate`: идея → вердикт с MDE, поправкой на число попыток из журнала и запечатанным OOS (Markdown + JSON) | `uv run python scripts/evaluate.py --strategy dual_ma_crossover_after_testing --hypothesis "..." --tag my-idea-1` |
 | `evaluate` без записи в журнал и без расхода бюджета (smoke) | добавить `--dry-run`; отчёт помечен `NOT RECORDED` |
 | Предварительная проверка мощности событийной идеи: n событий, безусловная σ и MDE без прогона стратегии (Markdown + JSON) | `uv run python scripts/evaluate.py --power-only --hypothesis "H1 pre-ex run-up" --window-sessions 10 --windows 5,15 --tag h1-power` |
+| Мощность с поправкой на зависимость событий: ICC на placebo-окнах, выбор уровня кластеризации, прогноз MDE на 40/60/76 тикеров, сценарии ICC | добавить `--placebo-icc --excess`; `--universe-file config/power_universe.json` фиксирует список тикеров с хешем; `--seed`, `--icc-bootstraps`, `--ticker-cap` переопределяют значения из `config/validation.json` |
 | Записать нижнюю границу попыток, сделанных до журнала (`kind="legacy"`, бюджет не тратит) | `uv run python scripts/evaluate.py --record-legacy` |
 | Дивиденды: выгрузка календаря из API (ручной запуск, токен из env; слияние выплат с одной экс-датой, слой `annotations` сохраняется, повторный `--write` идемпотентен) | `uv run python scripts/fetch_dividends.py --tickers SBER SNGSP --write` |
 | Weekend-бары: три группы сделок с блочным CI, микроструктура против будней, расписание брокера (Markdown + JSON) | `uv run python scripts/weekend_audit.py --tag t2-23`; без сети — `--no-schedule` |

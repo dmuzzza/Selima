@@ -27,8 +27,8 @@ import logging
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,17 +59,24 @@ from src.backtest.dividends import (  # noqa: E402
     build_coverage,
     load_dividend_thresholds,
     load_dividends,
+    ordered_candles,
     resolve_events,
     years_from_candles,
 )
 from src.backtest.evaluate import (  # noqa: E402
     EvaluateReport,
+    IccReport,
+    IccScenario,
     PowerReport,
     build_power_row,
     decide_outcome,
+    icc_ceiling,
+    icc_scenarios,
     load_evaluate_thresholds,
+    mde_from_sigma,
     mde_with_trials,
     minimum_detectable_effect,
+    project_power,
     render_power_report,
     render_report,
     sealed_rows,
@@ -81,11 +88,24 @@ from src.backtest.event_study import (  # noqa: E402
     CLUSTER_BY_MONTH,
     CLUSTER_BY_QUARTER,
     CLUSTER_BY_YEAR,
+    ICC_LEVELS,
+    ClusterLevel,
+    basket_totals,
+    choose_cluster_level,
     cluster_count,
+    cluster_groups,
+    cluster_means,
+    icc_bootstrap_ci,
+    icc_oneway,
+    lag1_autocorrelation,
+    load_power_universe,
     median_sigma_bps,
+    placebo_windows,
     scan_event_windows,
     unconditional_excess_sigma,
     unconditional_sigma,
+    window_excess_bps,
+    window_return_bps,
 )
 from src.backtest.heatmap import (  # noqa: E402
     load_thresholds as load_heatmap_thresholds,
@@ -314,6 +334,44 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="season bucket for the clustered MDE in --power-only (default quarter)",
     )
     parser.add_argument(
+        "--placebo-icc",
+        action="store_true",
+        help=(
+            "in --power-only, measure the intra-cluster correlation on placebo "
+            "windows (same rules, dates shifted off the real ones) and project "
+            "the MDE on a wider universe; no result of the idea is used"
+        ),
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="seed for the placebo shifts and the ICC bootstrap (default from config)",
+    )
+    parser.add_argument(
+        "--icc-bootstraps",
+        type=int,
+        default=None,
+        help="cluster bootstrap resamples for the ICC interval (default from config)",
+    )
+    parser.add_argument(
+        "--ticker-cap",
+        type=int,
+        default=None,
+        help=(
+            "upper bound of the projection: issuers whose daily candles can be "
+            "obtained; default from config, else measured from the database"
+        ),
+    )
+    parser.add_argument(
+        "--universe-file",
+        default=None,
+        help=(
+            "frozen ticker list with its sha256 (config/power_universe.json); an "
+            "edited list that was not re-hashed is refused"
+        ),
+    )
+    parser.add_argument(
         "--record-legacy",
         action="store_true",
         help="write the pre-journal attempt count as one legacy line and exit",
@@ -357,6 +415,202 @@ def parse_windows(value: str) -> tuple[int, ...]:
     return tuple(windows)
 
 
+DAILY_HISTORY_CUTOFF = date(2020, 12, 31)
+
+
+def available_daily_tickers(history, timeframe: str, cutoff: date) -> int | None:
+    """Issuers whose daily series starts on or before `cutoff`.
+
+    The projection must not promise a universe larger than the one whose daily
+    candles can be obtained: an issuer listed later has no 2020 bars, and an event
+    idea needs the history to place its events. The count is a bound, not an
+    estimate of dividend payers.
+    """
+    from sqlalchemy import text  # local: the script runs without the ORM layer
+
+    query = text(
+        "SELECT count(*) FROM ("
+        "SELECT figi FROM market_data WHERE timeframe = :tf "
+        "GROUP BY figi HAVING min(open_time) <= :cutoff"
+        ") AS usable"
+    )
+    try:
+        with history.engine.connect() as connection:
+            value = connection.execute(
+                query, {"tf": timeframe, "cutoff": cutoff}
+            ).scalar_one()
+    except Exception as error:  # the cap is optional and the report says so
+        logging.warning("ticker cap not measured: %s", error)
+        return None
+    return int(value)
+
+
+def build_icc_report(
+    *,
+    args: argparse.Namespace,
+    raw,
+    windows,
+    sigma: float | None,
+    events: int,
+    tickers,
+    idea_target: float | None,
+    evaluate_thresholds,
+    n_trials: int,
+    history,
+    timeframe_name: str,
+) -> IccReport:
+    """Placebo ICC, the gate level and the projection (ADR-033).
+
+    The placebo windows carry the same entry rule on shifted dates, so nothing
+    here depends on the hypothesis result: the check answers "how dependent is a
+    sample of this design", which is the same question on any event idea.
+    """
+    power_icc = evaluate_thresholds.power_icc
+    seed = args.seed if args.seed is not None else power_icc.seed
+    bootstraps = (
+        args.icc_bootstraps if args.icc_bootstraps is not None else power_icc.bootstraps
+    )
+
+    placebo = placebo_windows(
+        raw,
+        windows,
+        window_sessions=args.window_sessions,
+        sealed_start=evaluate_thresholds.sealed_start,
+        min_shift=power_icc.min_shift_sessions,
+        max_shift=power_icc.max_shift_sessions,
+        seed=seed,
+    )
+
+    totals = basket_totals(raw)
+    ordered = {ticker.upper(): ordered_candles(candles) for ticker, candles in raw.items()}
+    placed = []
+    outcomes: list[float] = []
+    for window in placebo.windows:
+        series = ordered.get(window.ticker)
+        if series is None:
+            continue
+        value = (
+            window_excess_bps(series, window, totals)
+            if args.excess
+            else window_return_bps(series, window)
+        )
+        if value is None:
+            continue
+        placed.append(window)
+        outcomes.append(value)
+
+    levels = []
+    for by in ICC_LEVELS:
+        groups = cluster_groups(placed, outcomes, by)
+        estimate = icc_oneway(groups)
+        low, high = icc_bootstrap_ci(groups, samples=bootstraps, seed=seed)
+        estimate = replace(estimate, ci_low=low, ci_high=high, bootstraps=bootstraps)
+        levels.append(
+            ClusterLevel(
+                by=by, icc=estimate, lag1=lag1_autocorrelation(cluster_means(groups))
+            )
+        )
+
+    decision = choose_cluster_level(levels, merge_lag1=power_icc.merge_lag1)
+    chosen = next(level for level in levels if level.by == decision.level)
+    current_mde = mde_from_sigma(
+        sigma,
+        events / chosen.icc.design_effect_value,
+        alpha=evaluate_thresholds.confirm_alpha,
+        power=evaluate_thresholds.power,
+        n_trials=n_trials,
+    )
+
+    available_now = available_daily_tickers(history, timeframe_name, DAILY_HISTORY_CUTOFF)
+    if args.ticker_cap is not None:
+        cap, cap_source = args.ticker_cap, "set by --ticker-cap"
+    elif power_icc.ticker_cap is not None:
+        cap, cap_source = power_icc.ticker_cap, "set in config/validation.json"
+    else:
+        cap = available_now
+        cap_source = (
+            f"measured: daily series starting by {DAILY_HISTORY_CUTOFF.isoformat()}"
+        )
+
+    projection = project_power(
+        sigma_bps=sigma,
+        events_per_ticker=events / len(tickers) if tickers else None,
+        clusters=chosen.clusters,
+        icc=chosen.icc.icc,
+        ticker_counts=power_icc.ticker_counts,
+        cap=cap,
+        target_idea_bps=idea_target,
+        alpha=evaluate_thresholds.confirm_alpha,
+        power=evaluate_thresholds.power,
+        n_trials=n_trials,
+    )
+
+    # The gate answers "load tickers or close the idea", so it uses the widest
+    # universe the cap allows, not the current sample: a design that only works
+    # at 20 tickers and stops improving is not worth the loading time.
+    if projection:
+        gate_mde = projection[-1].mde_bps
+        gate_tickers = projection[-1].tickers
+    else:
+        gate_mde = current_mde
+        gate_tickers = len(tickers)
+    gate_measurable = (
+        None if gate_mde is None or idea_target is None else gate_mde <= idea_target
+    )
+
+    events_per_ticker = events / len(tickers) if tickers else None
+    scenarios: list[IccScenario] = []
+    ceilings: dict[str, float | None] = {}
+    for level in levels:
+        scenarios.extend(
+            icc_scenarios(
+                level=level,
+                tickers=gate_tickers or len(tickers),
+                events_per_ticker=events_per_ticker,
+                sigma_bps=sigma,
+                target_idea_bps=idea_target,
+                alpha=evaluate_thresholds.confirm_alpha,
+                power=evaluate_thresholds.power,
+                n_trials=n_trials,
+            )
+        )
+        projected_events = (
+            None if events_per_ticker is None else events_per_ticker * (gate_tickers or 0)
+        )
+        ceilings[level.by] = icc_ceiling(
+            sigma_bps=sigma,
+            events=projected_events,
+            clusters=level.clusters,
+            target_idea_bps=idea_target,
+            alpha=evaluate_thresholds.confirm_alpha,
+            power=evaluate_thresholds.power,
+            n_trials=n_trials,
+        )
+
+    return IccReport(
+        seed=seed,
+        min_shift=power_icc.min_shift_sessions,
+        max_shift=power_icc.max_shift_sessions,
+        beyond_max_shift=placebo.beyond_max_shift,
+        placebo_events=len(placed),
+        placebo_skipped=placebo.skipped,
+        levels=tuple(levels),
+        decision=decision,
+        gate_mde_bps=gate_mde,
+        gate_measurable=gate_measurable,
+        target_idea_bps=idea_target,
+        gate_tickers=gate_tickers,
+        current_mde_bps=current_mde,
+        current_tickers=len(tickers),
+        projection=projection,
+        scenarios=tuple(scenarios),
+        ceilings=ceilings,
+        ticker_cap=cap,
+        ticker_cap_source=cap_source,
+        available_now=available_now,
+    )
+
+
 def run_power_only(args: argparse.Namespace) -> int:
     """Pre-check an event idea without a strategy, a PnL or a journal row.
 
@@ -380,7 +634,15 @@ def run_power_only(args: argparse.Namespace) -> int:
     instruments = load_instruments(INSTRUMENTS_PATH)
 
     manual = parse_tickers(args.tickers)
-    tickers = list(manual) if manual else list(portfolio.tickers)
+    universe_sha: str | None = None
+    if manual:
+        tickers = list(manual)
+    elif args.universe_file:
+        frozen = load_power_universe(args.universe_file)
+        tickers = list(frozen.tickers)
+        universe_sha = frozen.sha256
+    else:
+        tickers = list(portfolio.tickers)
     if args.limit:
         tickers = tickers[: args.limit]
     unknown = [ticker for ticker in tickers if ticker not in instruments]
@@ -441,6 +703,22 @@ def run_power_only(args: argparse.Namespace) -> int:
         live_retention=target_model.live_retention,
         cost_floor_bps=target_model.cost_floor_bps,
     )
+
+    icc_report: IccReport | None = None
+    if args.placebo_icc:
+        icc_report = build_icc_report(
+            args=args,
+            raw=raw,
+            windows=main_scan.windows,
+            sigma=main_sigma.sigma_bps,
+            events=main_scan.events,
+            tickers=tickers,
+            idea_target=idea_target,
+            evaluate_thresholds=evaluate_thresholds,
+            n_trials=n_trials,
+            history=history,
+            timeframe_name=timeframe_name,
+        )
 
     for window in windows:
         if window == args.window_sessions:
@@ -505,6 +783,8 @@ def run_power_only(args: argparse.Namespace) -> int:
         sharpe_target=target_model.sharpe_target,
         live_retention=target_model.live_retention,
         cost_floor_bps=target_model.cost_floor_bps,
+        icc=icc_report,
+        universe_sha256=universe_sha,
     )
 
     out_dir = Path(args.out_dir)
@@ -519,6 +799,7 @@ def run_power_only(args: argparse.Namespace) -> int:
                 "label": report.label,
                 "timeframe": timeframe_name,
                 "tickers": list(tickers),
+                "universe_sha256": universe_sha,
                 "window_sessions": args.window_sessions,
                 "windows": list(windows),
                 "rows": [row.describe() for row in rows],
@@ -542,6 +823,7 @@ def run_power_only(args: argparse.Namespace) -> int:
                 "grid_cells": grid_cells,
                 "measurable": report.measurable,
                 "cluster_by": args.cluster_by,
+                "icc": icc_report.describe() if icc_report is not None else None,
                 "economic_scale": {
                     "span_years": span_years,
                     "events_per_year": events_per_year,
@@ -586,6 +868,33 @@ def run_power_only(args: argparse.Namespace) -> int:
             f"economic scale: {events_per_year:.1f} trades/year, "
             f"idea target = {target_model.sharpe_target:g} * sigma / sqrt(trades a year) "
             f"/ {target_model.live_retention:g} = {_fmt(idea_target)}"
+        )
+    if icc_report is not None:
+        for level in icc_report.levels:
+            print(
+                f"icc {level.by:>7}: clusters={level.clusters:>3} "
+                f"icc={_num(level.icc.icc)} "
+                f"ci=[{_num(level.icc.ci_low)}; {_num(level.icc.ci_high)}] "
+                f"lag1={_num(level.lag1)}"
+            )
+        print(f"gate level: {icc_report.gate_level} — {icc_report.decision.reason}")
+        print(
+            f"gate MDE={_fmt(icc_report.gate_mde_bps)} "
+            f"at {icc_report.gate_tickers} tickers "
+            f"(current {_fmt(icc_report.current_mde_bps)} at {len(tickers)}) "
+            f"target={_fmt(icc_report.target_idea_bps)}"
+        )
+        for row in icc_report.projection:
+            marker = "*" if row.capped else " "
+            print(
+                f"projection {row.tickers:>4}{marker} events={row.events:>6.0f} "
+                f"clusters={row.clusters:>3} deff={row.design_effect:>5.2f} "
+                f"n_eff={row.effective_events:>6.1f} MDE={_fmt(row.mde_bps)} "
+                f"{'below' if row.below_target else 'above'} target"
+            )
+        print(
+            f"ticker cap: {icc_report.ticker_cap} ({icc_report.ticker_cap_source}); "
+            f"available now: {icc_report.available_now}"
         )
     measurable = report.measurable
     verdict = "n/a" if measurable is None else ("measurable" if measurable else "not measurable")
@@ -1034,6 +1343,10 @@ def main(argv: list[str] | None = None) -> int:
 
 def _fmt(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.1f} bps"
+
+
+def _num(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:+.2f}"
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 {
-  "version": "8",
+  "version": "9",
   "model_revision": "3",
   "notes": [
     "model_revision: which measurement model produced a report. 1 — no dividend calendar; 2 — trades spanning an ex-dividend bar are marked (T2-22, ADR-025); 3 — entry filter removed and candle preparation shared by the backtest and live (T3-8b, ADR-028): the trade set grew from 929 to 1711, so reports before and after are not comparable. Re-running an old hypothesis on a corrected model is not a new trial, so n_trials stays, but the revision records that the numbers moved.",
@@ -27,6 +27,7 @@
     "evaluate.target_edge_bps: the smallest per-trade effect worth trading after costs. 25 bps is set from the return target, not from what the current sample can measure: at sigma ~286 bps and ~280 trades a year, a per-trade edge of 25 bps gives an annual Sharpe near 1.5 before the correlation haircut and the live degradation, so 20 bps sits on the border and 25 keeps a margin (ADR-032). `rejected` means the interval proves the effect is BELOW this target, not that zero is not excluded.",
     "evaluate.target_model: the target of an event idea comes from its own trade count, not from a single number for every strategy (ADR-034). target = sharpe_target * sigma / sqrt(trades a year) / live_retention, floored at cost_floor_bps. sigma is the unconditional dispersion of the outcome variable and the trade count is the number of eligible events, both measured before the strategy exists, so the target can be fixed before the run and stored next to the hypothesis. live_retention is the share of the backtest edge expected to survive execution; a target that exactly reaches the Sharpe goal leaves no room for that loss. cost_floor_bps is a round-trip cost: no idea below it is worth trading whatever the sample size.",
     "evaluate.power: power of the minimum detectable effect. 0.80 is the standard: MDE = (z(1-alpha/2) + z(power)) * SE. The design table in docs/EVALUATE_DESIGN.md §5.1 was computed with 50% power (z only), so its numbers are ~1.43 times smaller; ADR-032 records both.",
+    "evaluate.power_icc: dependence of an event sample, measured on placebo windows (same rules, dates shifted off the real ones), so no result of the hypothesis enters (ADR-033). merge_lag1: when the lag-1 autocorrelation of adjacent cluster means is at or above this, the seasons still share a shock and the gate moves one level coarser even if the finer ICC is significant. The gate uses the coarsest level whose cluster bootstrap interval for the ICC excludes zero; the year level has about seven clusters, so in practice the choice is month or quarter. min_shift_sessions/max_shift_sessions: a placebo window is shifted by a random inside this range off its real exit date; 20 keeps it from touching the real window, 60 keeps it in the same season, and a window with no legal shift in the range moves further and is counted. ticker_counts are the projection points; ticker_cap bounds them by the issuers whose daily candles can actually be obtained. 76 was measured on 2026-11-09 from the T-Invest shares list: rub, api_trade_available, liquidity_flag, first_1day_candle_date <= 2020-12-31 and at least one dividend since 2020 (94 shares pass the history filter, 76 of them pay). A projection to 100 tickers would promise a universe that does not exist. bootstraps: cluster resamples for the ICC interval. seed fixes the shifts and the interval, so the check is reproducible.",
     "evaluate.screening_alpha: soft screening criterion on the fit window (CI 1-alpha). It filters dead ideas and never proves anything, so it does not need the strict level.",
     "evaluate.confirm_alpha: confirmation level on the sealed period; the per-hypothesis level is confirm_alpha / k, where k is the number of sealed accesses recorded in the journal.",
     "evaluate.sealed_start: first day of the sealed out-of-sample period. The evaluate loader never reads candles at or after this date unless the sealed period is opened explicitly; the row is not recorded and the period is printed as 'not accessed'.",
@@ -71,6 +72,15 @@
       "sharpe_target": 1.0,
       "live_retention": 0.6,
       "cost_floor_bps": 10.0
+    },
+    "power_icc": {
+      "ticker_counts": [40, 60, 100],
+      "ticker_cap": 76,
+      "bootstraps": 2000,
+      "merge_lag1": 0.3,
+      "min_shift_sessions": 20,
+      "max_shift_sessions": 60,
+      "seed": 20261109
     },
     "power": 0.8,
     "screening_alpha": 0.2,
