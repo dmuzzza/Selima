@@ -70,6 +70,10 @@ USE_MULTI_TEST_SIGNALS = True
 # НАСТРОЙКА ЛОГИРОВАНИЯ
 # ═══════════════════════════════════════════════════════════════════════════
 
+# Создаём папку для логов до FileHandler: на чистом checkout её нет,
+# и импорт модуля падал с FileNotFoundError (CI, tests/test_backtest_live_parity.py).
+Path("logs").mkdir(exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -80,9 +84,6 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger("TradingScheduler")
-
-# Создаём папку для логов
-Path("logs").mkdir(exist_ok=True)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # КОНСТАНТЫ

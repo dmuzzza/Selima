@@ -12,7 +12,7 @@
   хелперы `verdict.py` (пул, holdout, ×2 издержек, `tp_penalty`, leave-one-out, heatmap,
   null-тест), новых движков нет. Пять исходов с жёстким порядком
   `rejected → underpowered → inconclusive → fragile → works`; `rejected` — верхняя
-  граница CI95 ниже `target_edge_bps` (10 bps), а не «ноль не исключён».
+  граница CI95 ниже `target_edge_bps` (25 bps, см. `Changed`), а не «ноль не исключён».
   `underpowered` — выборка не видит целевой edge.
 - **MDE с мощностью 0.80:** `MDE = (z(1-alpha_adj/2) + z(power)) · SE`,
   `alpha_adj = alpha / n_trials`. Таблица дизайна считалась при 50% мощности
@@ -156,6 +156,11 @@
 
 ### Fixed
 
+- **Импорт `scheduler` падал на чистом checkout.** `logging.FileHandler("logs/scheduler.log")`
+  создавался до `Path("logs").mkdir()`, поэтому в свежем клоне (и в CI) `import scheduler`
+  бросал `FileNotFoundError`, а `tests/test_backtest_live_parity.py` падал на сборе тестов
+  (pytest exit code 2). Папка создаётся до настройки логирования. На Windows дефект был
+  скрыт локальной папкой `logs/` из `.gitignore`.
 - **Полностью покрытая позиция платила 5 ₽.** `balance * position_size_percent / 100`
   при 100% даёт остаток порядка 1e-14; без допуска он попадал в нижний диапазон тарифа.
   `MARGIN_MIN_BORROWED = 0.01 ₽` отсекает float-остаток; найдено на реальном прогоне
