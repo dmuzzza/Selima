@@ -1,5 +1,5 @@
 {
-  "version": "6",
+  "version": "7",
   "model_revision": "3",
   "notes": [
     "model_revision: which measurement model produced a report. 1 — no dividend calendar; 2 — trades spanning an ex-dividend bar are marked (T2-22, ADR-025); 3 — entry filter removed and candle preparation shared by the backtest and live (T3-8b, ADR-028): the trade set grew from 929 to 1711, so reports before and after are not comparable. Re-running an old hypothesis on a corrected model is not a new trial, so n_trials stays, but the revision records that the numbers moved.",
@@ -24,7 +24,7 @@
     "min_sample_trades: one floor for every decision that needs a minimum sample: a heatmap cell, a weekend trade group. Kept at the top level so the two checks cannot drift apart; a section may still override it locally (heatmap.min_trades_per_cell, used by the tests and the --min-trades flag).",
     "weekend.start: MOEX weekend trading began in March 2025. Earlier bars are almost all weekday sessions, so a combined 'with and without weekend bars' total would mix two market regimes. The audit window starts here for every ticker; a ticker whose first weekend bar is later starts at that bar, because the set was expanded at different dates.",
     "weekend.max_zero_volume_share: a weekend bar with volume == 0 had no trades. Above this share of the ticker's weekend bars in the window the weekend session is structurally unusable and the bars are excluded by a rule, not by the resulting net. 0.10 is a floor for 'the session trades', fixed before the run (ADR-031). The weekday-versus-weekend ratio is printed for information and is not decisive.",
-    "evaluate.target_edge_bps: the smallest per-trade effect worth trading after costs. 10 bps is the target, fixed before the first run; `rejected` means the interval proves the effect is BELOW this target, not that zero is not excluded.",
+    "evaluate.target_edge_bps: the smallest per-trade effect worth trading after costs. 25 bps is set from the return target, not from what the current sample can measure: at sigma ~286 bps and ~280 trades a year, a per-trade edge of 25 bps gives an annual Sharpe near 1.5 before the correlation haircut and the live degradation, so 20 bps sits on the border and 25 keeps a margin (ADR-032). `rejected` means the interval proves the effect is BELOW this target, not that zero is not excluded.",
     "evaluate.power: power of the minimum detectable effect. 0.80 is the standard: MDE = (z(1-alpha/2) + z(power)) * SE. The design table in docs/EVALUATE_DESIGN.md §5.1 was computed with 50% power (z only), so its numbers are ~1.43 times smaller; ADR-032 records both.",
     "evaluate.screening_alpha: soft screening criterion on the fit window (CI 1-alpha). It filters dead ideas and never proves anything, so it does not need the strict level.",
     "evaluate.confirm_alpha: confirmation level on the sealed period; the per-hypothesis level is confirm_alpha / k, where k is the number of sealed accesses recorded in the journal.",
@@ -65,7 +65,7 @@
     "max_zero_volume_share": 0.1
   },
   "evaluate": {
-    "target_edge_bps": 10.0,
+    "target_edge_bps": 25.0,
     "power": 0.8,
     "screening_alpha": 0.2,
     "confirm_alpha": 0.05,

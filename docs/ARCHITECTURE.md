@@ -240,6 +240,8 @@ p_selima_v8.1/
 ├── journal/                           [D] append-only журнал гипотез с хеш-цепочкой (ADR-029)
 │   ├── hypotheses.jsonl               одна строка JSON на запись; prev_hash связывает строки; коммитится
 │   └── README.md                      правила счёта (идеи vs grid_cells), бюджет, проверка цепочки
+├── docs/reference/                    [D] эталонные отчёты, воспроизводимые одной командой
+│   └── evaluate_rejected_dual_ma.md   `rejected` при планке 25 bps: калибровка ветки (ADR-032)
 ├── sdk_t_bank_docs/                   [D] локальная копия документации T-Invest API —
 │   │                                      источник истины по методам, полям и ошибкам
 │   ├── services/                      обзор сервисов (index.mdx) и папки по сервисам

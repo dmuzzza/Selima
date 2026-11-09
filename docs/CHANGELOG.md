@@ -21,7 +21,7 @@
   ≈ 3 300 без поправки и ≈ 8 000 с 20 попытками; 80% — ≈ 6 400 и ≈ 12 200.
   Пороги зафиксированы до прогона: `config/validation.json` v6, секция
   `evaluate` (`target_edge_bps`, `power`, `screening_alpha`, `confirm_alpha`,
-  `sealed_start`, `budget`).
+  `sealed_start`, `budget`); `target_edge_bps` поднят до 25 в v7 (см. `Changed`).
 - **`n_trials` только из журнала:** `trial_count()` суммирует `grid_cells` записей
   `kind="idea"` и `kind="legacy"`; флага `--n-trials` в `evaluate` нет.
 - **`kind="legacy"` и `--record-legacy`:** одна строка через API журнала с **нижней
@@ -54,6 +54,16 @@
 
 ### Changed
 
+- **Планка `target_edge_bps` поднята с 10 до 25 bps (ADR-032, `config/validation.json`
+  v7):** обоснование экономическое, а не подгонка под выборку. При σ ≈ 286 bps на сделку
+  и ≈ 280 сделках в год годовой Sharpe `edge / σ · √n` равен ≈ 0.6 при 10 bps, ≈ 1.2 при
+  20 и ≈ 1.5 при 25. Корреляция сделок между тикерами и деградация в live снижают оценку,
+  поэтому 20 bps — граница, 25 bps — запас. Побочное подтверждение проверяемости:
+  MDE 19.4 bps на 1698 сделках ниже планки. Следствие: `dual_ma` на текущем пуле даёт
+  `rejected` (верхняя граница CI95 +16.52 bps < 25), а не `underpowered`.
+- **Эталонный отчёт `rejected`:** `docs/reference/evaluate_rejected_dual_ma.md` —
+  прогон `--dry-run`, бюджет не тронут; воспроизводится одной командой и служит
+  калибровкой ветки `rejected`.
 - **`config/validation.json` v6:** добавлена секция `evaluate`; `version` 5 → 6.
 - **`scripts/` стал пакетом** (`scripts/__init__.py`): `evaluate.py` импортирует
   раннеры `verdict.py`, а не копирует их.
