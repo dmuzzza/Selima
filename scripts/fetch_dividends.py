@@ -144,10 +144,12 @@ def fetch(tickers: dict[str, str], date_from: date, date_to: date) -> list[dict]
                 if (item.dividend_type or "").strip().lower() == "cancelled":
                     continue
                 record = to_date(item.record_date)
+                declared = to_date(item.declared_date)
                 events.append(
                     {
                         "ticker": ticker,
                         "record_date": record.isoformat() if record else None,
+                        "declared_date": declared.isoformat() if declared else None,
                         "last_buy_date": last_buy.isoformat(),
                         "dividend_gross": round(amount, 6),
                         "source": "api",
@@ -187,9 +189,16 @@ def merge_payouts(events: list[dict]) -> list[dict]:
         record_dates = sorted(
             str(item["record_date"]) for item in items if item.get("record_date")
         )
+        # Two payouts on one ex-date were announced separately. For the
+        # no-look-ahead filter the event is known only when the LAST of them was
+        # declared, so the latest declaration is kept (conservative).
+        declared_dates = sorted(
+            str(item["declared_date"]) for item in items if item.get("declared_date")
+        )
         entry: dict = {
             "ticker": ticker,
             "record_date": record_dates[-1] if record_dates else None,
+            "declared_date": declared_dates[-1] if declared_dates else None,
             "last_buy_date": last_buy,
             "dividend_gross": total,
             "source": "api",
@@ -199,6 +208,7 @@ def merge_payouts(events: list[dict]) -> list[dict]:
                 {
                     "dividend_gross": round(float(item["dividend_gross"]), 6),
                     "record_date": item.get("record_date"),
+                    "declared_date": item.get("declared_date"),
                 }
                 for item in items
             ]

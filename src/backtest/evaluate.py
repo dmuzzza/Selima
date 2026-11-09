@@ -1,4 +1,4 @@
-"""`evaluate`: one command from an idea to a verdict.
+﻿"""`evaluate`: one command from an idea to a verdict.
 
 The verdict engine (`verdict.py`) decides from inputs; this module adds what the
 verdict lacks (ADR-032):
@@ -24,6 +24,7 @@ from datetime import date
 from pathlib import Path
 from statistics import NormalDist
 
+from src.backtest.event_study import SigmaEstimate, WindowScan
 from src.backtest.hypothesis_log import canonical_json
 from src.backtest.verdict import (
     FRAGILE,
@@ -46,6 +47,36 @@ DEFAULT_SCREENING_ALPHA = 0.20
 DEFAULT_CONFIRM_ALPHA = 0.05
 DEFAULT_BUDGET = 20
 DEFAULT_SEALED_START = date(2026, 10, 1)
+# ADR-034: the target of an idea comes from its own trade count, not from a
+# single number for every strategy. `live_retention` is the share of the backtest
+# edge expected to survive execution.
+DEFAULT_SHARPE_TARGET = 1.0
+DEFAULT_LIVE_RETENTION = 0.6
+DEFAULT_COST_FLOOR_BPS = 10.0
+
+
+@dataclass(frozen=True)
+class TargetModel:
+    """Parameters of the trade-count-dependent target (ADR-034)."""
+
+    sharpe_target: float = DEFAULT_SHARPE_TARGET
+    live_retention: float = DEFAULT_LIVE_RETENTION
+    cost_floor_bps: float = DEFAULT_COST_FLOOR_BPS
+
+    def __post_init__(self) -> None:
+        if self.sharpe_target <= 0:
+            raise ValueError("sharpe_target must be positive")
+        if not 0.0 < self.live_retention <= 1.0:
+            raise ValueError("live_retention must be in (0, 1]")
+        if self.cost_floor_bps < 0:
+            raise ValueError("cost_floor_bps must be non-negative")
+
+    def describe(self) -> dict:
+        return {
+            "sharpe_target": self.sharpe_target,
+            "live_retention": self.live_retention,
+            "cost_floor_bps": self.cost_floor_bps,
+        }
 
 
 @dataclass(frozen=True)
@@ -58,6 +89,7 @@ class EvaluateThresholds:
     confirm_alpha: float = DEFAULT_CONFIRM_ALPHA
     sealed_start: date = DEFAULT_SEALED_START
     budget: int = DEFAULT_BUDGET
+    target_model: TargetModel = TargetModel()
     source: str = "defaults"
     fingerprint: str = "defaults"
 
@@ -81,6 +113,7 @@ class EvaluateThresholds:
             "confirm_alpha": self.confirm_alpha,
             "sealed_start": self.sealed_start.isoformat(),
             "budget": self.budget,
+            "target_model": self.target_model.describe(),
             "evaluate_version": self.fingerprint,
         }
 
@@ -96,6 +129,9 @@ def load_evaluate_thresholds(path: str | Path) -> EvaluateThresholds:
     if not version:
         raise ValueError(f"{path}: missing 'version'")
     sealed = section.get("sealed_start")
+    model_raw = section.get("target_model") or {}
+    if not isinstance(model_raw, Mapping):
+        raise ValueError(f"{path}: 'evaluate.target_model' must be an object")
     return EvaluateThresholds(
         target_edge_bps=float(section.get("target_edge_bps", DEFAULT_TARGET_EDGE_BPS)),
         power=float(section.get("power", DEFAULT_POWER)),
@@ -105,6 +141,11 @@ def load_evaluate_thresholds(path: str | Path) -> EvaluateThresholds:
             date.fromisoformat(str(sealed)) if sealed is not None else DEFAULT_SEALED_START
         ),
         budget=int(section.get("budget", DEFAULT_BUDGET)),
+        target_model=TargetModel(
+            sharpe_target=float(model_raw.get("sharpe_target", DEFAULT_SHARPE_TARGET)),
+            live_retention=float(model_raw.get("live_retention", DEFAULT_LIVE_RETENTION)),
+            cost_floor_bps=float(model_raw.get("cost_floor_bps", DEFAULT_COST_FLOOR_BPS)),
+        ),
         source=str(path),
         fingerprint=f"{version}+{_digest(section)[:12]}",
     )
@@ -216,6 +257,28 @@ def trades_needed(
         return None
     z_total = _z(adjusted_alpha(alpha, n_trials)) + NormalDist().inv_cdf(power)
     return math.ceil((z_total * sigma / target_bps) ** 2)
+
+
+def mde_from_sigma(
+    sigma: float | None,
+    trades: int,
+    *,
+    alpha: float = 0.05,
+    power: float = DEFAULT_POWER,
+    n_trials: int = 1,
+) -> float | None:
+    """MDE from a known sigma and an event count, without any strategy result.
+
+    This is the pre-check used by `evaluate --power-only`: an event idea has a
+    countable number of events, and the dispersion of the outcome variable can be
+    measured unconditionally, so the question "can this sample see the target"
+    is answered before the strategy exists.
+    """
+    if sigma is None or sigma <= 0 or trades < 2:
+        return None
+    z_total = _z(adjusted_alpha(alpha, n_trials)) + NormalDist().inv_cdf(power)
+    return z_total * sigma / math.sqrt(trades)
+
 
 
 # ── outcomes ───────────────────────────────────────────────────────────────
@@ -507,3 +570,322 @@ def render_report(report: EvaluateReport) -> str:
         lines.append(f"> {report.journal_warning}")
         lines.append("")
     return "\n".join(lines)
+
+
+# ── power-only pre-check ───────────────────────────────────────────────────
+
+
+def target_for_trades(
+    *,
+    sigma_bps: float | None,
+    trades_per_year: float | None,
+    sharpe_target: float = 1.0,
+    live_retention: float = 0.6,
+    cost_floor_bps: float = 10.0,
+) -> float | None:
+    """Per-trade edge an idea must show, from its own trade count (ADR-034).
+
+    `target = sharpe_target * sigma / sqrt(trades a year) / live_retention`,
+    floored at the cost of a round trip. The number comes from the unconditional
+    sigma and the number of events, never from the strategy result, so it can be
+    fixed before the run and stored next to the hypothesis.
+
+    `live_retention` is the share of the backtest edge expected to survive
+    execution: a backtest edge that exactly reaches the Sharpe target leaves no
+    room for the part that live loses.
+    """
+    if sigma_bps is None or sigma_bps <= 0:
+        return None
+    if trades_per_year is None or trades_per_year <= 0:
+        return None
+    if not 0.0 < live_retention <= 1.0:
+        raise ValueError("live_retention must be in (0, 1]")
+    if sharpe_target <= 0:
+        raise ValueError("sharpe_target must be positive")
+    raw = sharpe_target * sigma_bps / math.sqrt(trades_per_year) / live_retention
+    return max(raw, cost_floor_bps)
+
+
+@dataclass(frozen=True)
+class PowerRow:
+    """One window length of the pre-check: events, clusters, sigma, MDE, target.
+
+    No mean return is stored or printed: the pre-check answers "can the sample
+    see the target", not "what did the windows return". A mean seen before the
+    journal entry cannot be unseen and would bias the decision (ADR-033).
+    """
+
+    window_sessions: int
+    events: int
+    clusters: int
+    sigma_bps: float | None
+    mde_bps: float | None
+    mde_adjusted_bps: float | None
+    mde_cluster_bps: float | None
+    target_idea_bps: float | None
+    trades_per_year: float | None
+
+    def describe(self) -> dict:
+        return {
+            "window_sessions": self.window_sessions,
+            "events": self.events,
+            "clusters": self.clusters,
+            "sigma_bps": _round(self.sigma_bps),
+            "mde_bps": _round(self.mde_bps),
+            "mde_adjusted_bps": _round(self.mde_adjusted_bps),
+            "mde_cluster_bps": _round(self.mde_cluster_bps),
+            "target_idea_bps": _round(self.target_idea_bps),
+            "trades_per_year": _round(self.trades_per_year),
+        }
+
+
+@dataclass(frozen=True)
+class PowerReport:
+    """Result of `evaluate --power-only`: a feasibility check, not a verdict."""
+
+    label: str
+    timeframe: str
+    tickers: tuple[str, ...]
+    total_events: int
+    events: int
+    per_ticker: Mapping[str, int]
+    sigma_bps: float | None
+    median_sigma_bps: float | None
+    sigma_windows: int
+    target_edge_bps: float
+    power: float
+    alpha: float
+    n_trials: int
+    grid_cells: int
+    main_window: int
+    sealed_start: date
+    sigma_mode: str = "raw"
+    cluster_by: str = "quarter"
+    rows: tuple[PowerRow, ...] = ()
+    out_of_history: int = 0
+    future: int = 0
+    sealed: int = 0
+    declared_after_entry: int = 0
+    missing_declared_date: int = 0
+    journal_warning: str | None = None
+    evaluate_fingerprint: str = "defaults"
+    span_years: float | None = None
+    events_per_year: float | None = None
+    sharpe_target: float = 1.0
+    live_retention: float = 0.6
+    cost_floor_bps: float = 10.0
+
+    @property
+    def main_row(self) -> PowerRow | None:
+        return next(
+            (row for row in self.rows if row.window_sessions == self.main_window), None
+        )
+
+    @property
+    def measurable(self) -> bool | None:
+        """Whether the idea's own target is detectable on the clustered sample.
+
+        The decision uses the cluster MDE, not the iid one: events cluster by
+        season, so 129 events are fewer than 129 independent observations.
+        """
+        row = self.main_row
+        if row is None or row.mde_cluster_bps is None or row.target_idea_bps is None:
+            return None
+        return row.mde_cluster_bps <= row.target_idea_bps
+
+
+def build_power_row(
+    *,
+    window_sessions: int,
+    scan: WindowScan,
+    sigma: SigmaEstimate,
+    clusters: int,
+    target_edge_bps: float,
+    target_idea_bps: float | None,
+    trades_per_year: float | None,
+    alpha: float,
+    power: float,
+    n_trials: int,
+) -> PowerRow:
+    return PowerRow(
+        window_sessions=window_sessions,
+        events=scan.events,
+        clusters=clusters,
+        sigma_bps=sigma.sigma_bps,
+        mde_bps=mde_from_sigma(
+            sigma.sigma_bps, scan.events, alpha=alpha, power=power, n_trials=1
+        ),
+        mde_adjusted_bps=mde_from_sigma(
+            sigma.sigma_bps, scan.events, alpha=alpha, power=power, n_trials=n_trials
+        ),
+        mde_cluster_bps=mde_from_sigma(
+            sigma.sigma_bps, clusters, alpha=alpha, power=power, n_trials=n_trials
+        ),
+        target_idea_bps=target_idea_bps,
+        trades_per_year=trades_per_year,
+    )
+
+
+def render_power_report(report: PowerReport) -> str:
+    """Markdown for the pre-check; explicitly not a verdict."""
+    lines: list[str] = [
+        f"# Power only: {report.label} / {report.timeframe}",
+        (
+            f"Tickers: {len(report.tickers)} | events: {report.events} of "
+            f"{report.total_events} in the calendar"
+        ),
+        (
+            f"Ideas this quarter: not read, not spent — this is a pre-check, "
+            f"the journal is untouched (grid_cells {report.grid_cells})"
+        ),
+        "",
+        "> **NOT A VERDICT.** No strategy ran, no trade was simulated and no PnL "
+        "was computed. The question is only whether this sample could separate "
+        f"the idea target ({_bps(report.main_row.target_idea_bps) if report.main_row else 'n/a'}"
+        f" bps) from zero at power {report.power:.2f}. No mean return is printed: "
+        "a number seen before the journal entry would bias the decision.",
+        "",
+        "## Events",
+        "",
+        "```",
+        f"eligible            {report.events:>4}",
+        f"out of history      {report.out_of_history:>4}",
+        f"future              {report.future:>4}",
+        f"sealed period       {report.sealed:>4}",
+        f"declared after entry{report.declared_after_entry:>4}",
+        f"declaration missing {report.missing_declared_date:>4}",
+        "```",
+        "",
+    ]
+    if report.per_ticker:
+        per_ticker = ", ".join(f"{key}={value}" for key, value in report.per_ticker.items())
+        lines.append(f"per ticker: {per_ticker}")
+        lines.append("")
+
+    lines.append("## Power")
+    lines.append("")
+    lines.append("```")
+    lines.append(
+        f"{'window':>7} {'events':>7} {'clusters':>9} {'sigma':>8} "
+        f"{'MDE':>7} {'MDE@trials':>11} {'MDE clust':>10} {'target':>8}"
+    )
+    for row in report.rows:
+        lines.append(
+            f"{row.window_sessions:>7} {row.events:>7} {row.clusters:>9} "
+            f"{_bps(row.sigma_bps):>8} {_bps(row.mde_bps):>7} "
+            f"{_bps(row.mde_adjusted_bps):>11} {_bps(row.mde_cluster_bps):>10} "
+            f"{_bps(row.target_idea_bps):>8}"
+        )
+    lines.append("```")
+    lines.append("")
+    median = _bps(report.median_sigma_bps)
+    measured = (
+        "excess return to the equal-weight basket, excluding the traded stock"
+        if report.sigma_mode == "excess"
+        else "raw return"
+    )
+    lines.append(
+        f"sigma is unconditional and measured on the {measured}: standard deviation "
+        f"of all {report.sigma_windows} rolling window returns, not of the event "
+        f"windows. median per-ticker sigma {median}."
+    )
+    lines.append(
+        f"alpha {report.alpha:g} | trials {report.n_trials} (journal + grid) | "
+        f"power {report.power:.2f} | clusters by {report.cluster_by}"
+    )
+    lines.append("")
+    lines.append(
+        f"`MDE` uses the event count as if the events were independent; "
+        f"`MDE clust` uses the number of {report.cluster_by}s instead. Events cluster "
+        "by season (most issuers pay in June-July), so the clustered number is the "
+        "honest one and the decision uses it (ADR-033)."
+    )
+    lines.append("")
+    measurable = report.measurable
+    if measurable is None:
+        lines.append("**Cannot say:** too few events for an MDE.")
+    elif measurable:
+        lines.append(
+            "**Measurable:** the clustered MDE is at or below the idea target, so "
+            "the idea can be tested without changing the design."
+        )
+    else:
+        main = report.main_row
+        lines.append(
+            f"**Not measurable:** the clustered MDE ({_bps(main.mde_cluster_bps) if main else 'n/a'} "
+            f"bps) is above the idea target ({_bps(main.target_idea_bps) if main else 'n/a'} bps). "
+            "Running the idea would spend a slot on a sample that cannot answer the "
+            "question; widen the universe or change the design first."
+        )
+    lines.append("")
+
+    lines.append("## Economic scale")
+    lines.append("")
+    if report.events_per_year is None or report.span_years is None:
+        lines.append("not available: too few events to place them on a timeline.")
+    else:
+        lines.append(
+            f"{report.events} events over {report.span_years:.1f} years = "
+            f"{report.events_per_year:.1f} trades a year."
+        )
+        lines.append("")
+        lines.append("```")
+        lines.append(
+            f"idea target = {report.sharpe_target:g} * sigma / sqrt(trades a year) "
+            f"/ {report.live_retention:g}"
+        )
+        lines.append(f"cost floor                  {report.cost_floor_bps:>7.0f} bps")
+        main = report.main_row
+        if main is not None:
+            lines.append(f"target for this idea        {_bps(main.target_idea_bps):>7} bps")
+        lines.append("```")
+        lines.append("")
+        lines.append(
+            "The target is computed from the unconditional sigma and the event "
+            "count, before the strategy exists, and is stored next to the "
+            "hypothesis (ADR-034). `live_retention` is the share of the backtest "
+            "edge expected to survive execution; a target that exactly reaches the "
+            "Sharpe goal leaves no room for that loss."
+        )
+    lines.append("")
+
+    lines.append("## Caveats")
+    lines.append("")
+    lines.append(
+        "- events of one ticker can overlap, and events cluster by season; the "
+        "clustered MDE counts each season once, which is a lower bound on the "
+        "effective sample size, so the true MDE is not higher than printed."
+    )
+    if report.missing_declared_date:
+        lines.append(
+            f"- `declared_date` is missing for {report.missing_declared_date} events "
+            "(calendar v3 was fetched before the field was stored). The "
+            "no-look-ahead filter is not applied to them; the next fetch writes it."
+        )
+    if report.sigma_mode == "excess":
+        lines.append(
+            "- the basket is equal-weight, excludes the traded stock and rebalances "
+            "to the tickers that have a bar on a date; it removes the market move, "
+            "not sector or size effects."
+        )
+    lines.append(
+        "- `not_paid` events are kept: they were announced before the entry, and "
+        "dropping them would be survivorship bias."
+    )
+    lines.append(
+        f"- the sealed period starting {report.sealed_start.isoformat()} is excluded "
+        "from the pre-check as well."
+    )
+    lines.append("")
+    if report.journal_warning:
+        lines.append(f"> {report.journal_warning}")
+        lines.append("")
+    lines.append(f"evaluate {report.evaluate_fingerprint}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _bps(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.0f}"
+
+

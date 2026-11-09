@@ -1,4 +1,4 @@
-"""`evaluate <strategy>`: one command from an idea to a verdict (T2-25).
+﻿"""`evaluate <strategy>`: one command from an idea to a verdict (T2-25).
 
 Reuses the verdict pipeline (`scripts/verdict.py`) and adds what the design
 requires (docs/EVALUATE_DESIGN.md, ADR-032):
@@ -64,14 +64,28 @@ from src.backtest.dividends import (  # noqa: E402
 )
 from src.backtest.evaluate import (  # noqa: E402
     EvaluateReport,
+    PowerReport,
+    build_power_row,
     decide_outcome,
     load_evaluate_thresholds,
     mde_with_trials,
     minimum_detectable_effect,
+    render_power_report,
     render_report,
     sealed_rows,
     sigma_bps,
+    target_for_trades,
     trades_needed,
+)
+from src.backtest.event_study import (  # noqa: E402
+    CLUSTER_BY_MONTH,
+    CLUSTER_BY_QUARTER,
+    CLUSTER_BY_YEAR,
+    cluster_count,
+    median_sigma_bps,
+    scan_event_windows,
+    unconditional_excess_sigma,
+    unconditional_sigma,
 )
 from src.backtest.heatmap import (  # noqa: E402
     load_thresholds as load_heatmap_thresholds,
@@ -265,19 +279,53 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--timeframe", default=None, help="default: config/portfolio.json")
     parser.add_argument("--universe", default=str(PORTFOLIO_PATH), help="portfolio file")
     parser.add_argument("--tickers", default=None, help="manual set, counts as a new idea")
-    parser.add_argument(
-        "--grid-cells", type=int, default=1, help="variants looked at inside the idea"
-    )
     parser.add_argument("--tag", default=None, help="report name")
+    parser.add_argument(
+        "--power-only",
+        action="store_true",
+        help=(
+            "pre-check an event idea: count eligible dividend events and print "
+            "sigma and MDE; runs no strategy and writes no journal row"
+        ),
+    )
+    parser.add_argument(
+        "--window-sessions",
+        type=int,
+        default=10,
+        help="traded window for --power-only, in sessions (default 10)",
+    )
+    parser.add_argument(
+        "--windows",
+        default="5,15",
+        help="extra window lengths for robustness in --power-only (default 5,15)",
+    )
+    parser.add_argument(
+        "--excess",
+        action="store_true",
+        help=(
+            "in --power-only, measure sigma on the window return net of the "
+            "equal-weight basket of the other tickers instead of the raw return"
+        ),
+    )
+    parser.add_argument(
+        "--cluster-by",
+        default=CLUSTER_BY_QUARTER,
+        choices=[CLUSTER_BY_QUARTER, CLUSTER_BY_MONTH, CLUSTER_BY_YEAR],
+        help="season bucket for the clustered MDE in --power-only (default quarter)",
+    )
     parser.add_argument(
         "--record-legacy",
         action="store_true",
         help="write the pre-journal attempt count as one legacy line and exit",
     )
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="run everything, write no journal row and spend no budget",
+        "--grid-cells",
+        type=int,
+        default=None,
+        help=(
+            "variants looked at inside the idea; default 1 for a verdict run and "
+            "the number of windows for --power-only"
+        ),
     )
     parser.add_argument("--limit", type=int, help="first N tickers, for a smoke run")
     parser.add_argument("--journal", default=str(DEFAULT_JOURNAL_PATH))
@@ -293,6 +341,261 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def parse_windows(value: str) -> tuple[int, ...]:
+    """Window lengths from `--windows 5,15`."""
+    windows: list[int] = []
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        window = int(part)
+        if window < 1:
+            raise SystemExit("--windows must list positive session counts")
+        windows.append(window)
+    if not windows:
+        raise SystemExit("--windows is empty")
+    return tuple(windows)
+
+
+def run_power_only(args: argparse.Namespace) -> int:
+    """Pre-check an event idea without a strategy, a PnL or a journal row.
+
+    Reads the dividend calendar and the candles, counts eligible event windows,
+    measures the unconditional dispersion of the outcome variable and prints the
+    MDE. A design whose MDE exceeds the target is changed before a slot is spent.
+    """
+    load_dotenv(ROOT / ".env")
+    required = ("PG_HOST", "PG_USER", "PG_PASSWORD", "PG_DBNAME")
+    missing = [name for name in required if not os.getenv(name)]
+    if missing:
+        raise SystemExit(f"Missing environment variables: {', '.join(missing)}")
+
+    if args.window_sessions < 1:
+        raise SystemExit("--window-sessions must be >= 1")
+
+    portfolio = load_portfolio(args.universe)
+    timeframe_name = args.timeframe or "1d"
+    evaluate_thresholds = load_evaluate_thresholds(args.thresholds_file)
+    dividend_thresholds = load_dividend_thresholds(args.thresholds_file)
+    instruments = load_instruments(INSTRUMENTS_PATH)
+
+    manual = parse_tickers(args.tickers)
+    tickers = list(manual) if manual else list(portfolio.tickers)
+    if args.limit:
+        tickers = tickers[: args.limit]
+    unknown = [ticker for ticker in tickers if ticker not in instruments]
+    if unknown:
+        raise SystemExit(f"Tickers missing from config/instruments.json: {', '.join(unknown)}")
+
+    windows = tuple(sorted({args.window_sessions, *parse_windows(args.windows)}))
+    journal_path = Path(args.journal)
+    entries = load_hypotheses(journal_path)
+    grid_cells = args.grid_cells if args.grid_cells is not None else len(windows)
+    n_trials = trial_count(entries) + grid_cells
+
+    history = HistoryManager(broker=None)  # type: ignore[arg-type]
+    timeframe = Timeframe(timeframe_name)
+    raw = {
+        ticker: history.get_candles(instruments[ticker]["figi"], timeframe)
+        for ticker in tickers
+    }
+    empty = [ticker for ticker, candles in raw.items() if len(candles) < 2]
+    if empty:
+        raise SystemExit(f"No candles for: {', '.join(empty)}")
+
+    # The same technical guarantee as the verdict path: the sealed period is cut
+    # before anything is counted.
+    raw = sealed_rows(raw, evaluate_thresholds.sealed_start)
+
+    calendar = load_dividends(args.dividends_file)
+    wanted = set(tickers)
+    events = [event for event in calendar.events if event.ticker in wanted]
+
+    rows = []
+    scans = {}
+    sigma_of = unconditional_excess_sigma if args.excess else unconditional_sigma
+    target_model = evaluate_thresholds.target_model
+
+    # Trades a year are needed for the idea target, so the main window is scanned
+    # first and the other windows are only robustness.
+    main_scan = scan_event_windows(
+        raw,
+        events,
+        window_sessions=args.window_sessions,
+        sealed_start=evaluate_thresholds.sealed_start,
+        t1_settlement_switch=dividend_thresholds.t1_settlement_switch,
+    )
+    main_sigma = sigma_of(raw, args.window_sessions)
+
+    span_years = events_per_year = None
+    if main_scan.windows:
+        first = min(window.entry_time for window in main_scan.windows)
+        last = max(window.exit_time for window in main_scan.windows)
+        span_years = max((last - first).days / 365.25, 1e-9)
+        events_per_year = main_scan.events / span_years
+
+    idea_target = target_for_trades(
+        sigma_bps=main_sigma.sigma_bps,
+        trades_per_year=events_per_year,
+        sharpe_target=target_model.sharpe_target,
+        live_retention=target_model.live_retention,
+        cost_floor_bps=target_model.cost_floor_bps,
+    )
+
+    for window in windows:
+        if window == args.window_sessions:
+            scan, sigma = main_scan, main_sigma
+        else:
+            scan = scan_event_windows(
+                raw,
+                events,
+                window_sessions=window,
+                sealed_start=evaluate_thresholds.sealed_start,
+                t1_settlement_switch=dividend_thresholds.t1_settlement_switch,
+            )
+            sigma = sigma_of(raw, window)
+        clusters = cluster_count(scan.windows, args.cluster_by)
+        rows.append(
+            build_power_row(
+                window_sessions=window,
+                scan=scan,
+                sigma=sigma,
+                clusters=clusters,
+                target_edge_bps=evaluate_thresholds.target_edge_bps,
+                target_idea_bps=idea_target,
+                trades_per_year=events_per_year,
+                alpha=evaluate_thresholds.confirm_alpha,
+                power=evaluate_thresholds.power,
+                n_trials=n_trials,
+            )
+        )
+        scans[window] = (scan, sigma, clusters)
+
+    tag = args.tag or f"power-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
+
+    report = PowerReport(
+        label=args.hypothesis or "power pre-check",
+        timeframe=timeframe_name,
+        tickers=tuple(tickers),
+        total_events=main_scan.total_events,
+        events=main_scan.events,
+        per_ticker=main_scan.per_ticker(),
+        sigma_bps=main_sigma.sigma_bps,
+        median_sigma_bps=median_sigma_bps(main_sigma),
+        sigma_windows=main_sigma.windows,
+        target_edge_bps=evaluate_thresholds.target_edge_bps,
+        power=evaluate_thresholds.power,
+        alpha=evaluate_thresholds.confirm_alpha,
+        n_trials=n_trials,
+        grid_cells=grid_cells,
+        main_window=args.window_sessions,
+        sealed_start=evaluate_thresholds.sealed_start,
+        sigma_mode="excess" if args.excess else "raw",
+        cluster_by=args.cluster_by,
+        rows=tuple(rows),
+        out_of_history=main_scan.out_of_history,
+        future=main_scan.future,
+        sealed=main_scan.sealed,
+        declared_after_entry=main_scan.declared_after_entry,
+        missing_declared_date=main_scan.missing_declared_date,
+        journal_warning=journal_git_state(journal_path, root=ROOT).warning(),
+        evaluate_fingerprint=evaluate_thresholds.fingerprint,
+        span_years=span_years,
+        events_per_year=events_per_year,
+        sharpe_target=target_model.sharpe_target,
+        live_retention=target_model.live_retention,
+        cost_floor_bps=target_model.cost_floor_bps,
+    )
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    md_path = out_dir / f"power_{tag}.md"
+    json_path = out_dir / f"power_{tag}.json"
+    md_path.write_text(render_power_report(report), encoding="utf-8")
+    json_path.write_text(
+        json.dumps(
+            {
+                "mode": "power_only",
+                "label": report.label,
+                "timeframe": timeframe_name,
+                "tickers": list(tickers),
+                "window_sessions": args.window_sessions,
+                "windows": list(windows),
+                "rows": [row.describe() for row in rows],
+                "events": {
+                    "total": main_scan.total_events,
+                    "eligible": main_scan.events,
+                    "per_ticker": main_scan.per_ticker(),
+                    "out_of_history": main_scan.out_of_history,
+                    "future": main_scan.future,
+                    "sealed": main_scan.sealed,
+                    "declared_after_entry": main_scan.declared_after_entry,
+                    "missing_declared_date": main_scan.missing_declared_date,
+                },
+                "sigma": main_sigma.describe(),
+                "sigma_mode": "excess" if args.excess else "raw",
+                "median_sigma_bps": report.median_sigma_bps,
+                "target_edge_bps": evaluate_thresholds.target_edge_bps,
+                "power": evaluate_thresholds.power,
+                "alpha": evaluate_thresholds.confirm_alpha,
+                "n_trials": n_trials,
+                "grid_cells": grid_cells,
+                "measurable": report.measurable,
+                "cluster_by": args.cluster_by,
+                "economic_scale": {
+                    "span_years": span_years,
+                    "events_per_year": events_per_year,
+                    "target_idea_bps": idea_target,
+                    "sharpe_target": target_model.sharpe_target,
+                    "live_retention": target_model.live_retention,
+                    "cost_floor_bps": target_model.cost_floor_bps,
+                },
+                "dividends": f"{calendar.version}+{calendar.sha256[:12]}",
+                "evaluate": evaluate_thresholds.fingerprint,
+                "sealed_start": evaluate_thresholds.sealed_start.isoformat(),
+                "journal": {"path": str(journal_path), "touched": False},
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    print(f"power-only: {report.label} / {timeframe_name} tickers={len(tickers)}")
+    print(
+        f"events: eligible={main_scan.events} of {main_scan.total_events} "
+        f"(out_of_history={main_scan.out_of_history} future={main_scan.future} "
+        f"sealed={main_scan.sealed} declared_after_entry={main_scan.declared_after_entry} "
+        f"missing_declared_date={main_scan.missing_declared_date})"
+    )
+    for row in rows:
+        print(
+            f"window {row.window_sessions:>2}: events={row.events:>4} "
+            f"clusters={row.clusters:>3} sigma={_fmt(row.sigma_bps)} "
+            f"MDE={_fmt(row.mde_bps)} MDE@{n_trials}={_fmt(row.mde_adjusted_bps)} "
+            f"MDEcluster={_fmt(row.mde_cluster_bps)} "
+            f"target_idea={_fmt(row.target_idea_bps)}"
+        )
+    print(
+        f"config target={evaluate_thresholds.target_edge_bps:g} bps | "
+        f"power={evaluate_thresholds.power:.2f} alpha={evaluate_thresholds.confirm_alpha:g} "
+        f"| clusters by {args.cluster_by}"
+    )
+    if events_per_year is not None:
+        print(
+            f"economic scale: {events_per_year:.1f} trades/year, "
+            f"idea target = {target_model.sharpe_target:g} * sigma / sqrt(trades a year) "
+            f"/ {target_model.live_retention:g} = {_fmt(idea_target)}"
+        )
+    measurable = report.measurable
+    verdict = "n/a" if measurable is None else ("measurable" if measurable else "not measurable")
+    print(f"POWER: {verdict}")
+    print("journal: not touched (pre-check, no idea slot spent)")
+    print(f"report: {md_path}")
+    print(f"snapshot: {json_path}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logging.basicConfig(
@@ -300,7 +603,7 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
-    if args.grid_cells < 1:
+    if args.grid_cells is not None and args.grid_cells < 1:
         raise SystemExit("--grid-cells must be >= 1")
 
     if args.record_legacy:
@@ -316,10 +619,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"journal: {journal_path}")
         return 0
 
+    if args.power_only:
+        return run_power_only(args)
+
     if not args.strategy or not args.hypothesis:
         raise SystemExit(
             "--strategy and --hypothesis are required unless --record-legacy is set"
         )
+
+    grid_cells = args.grid_cells if args.grid_cells is not None else 1
 
     load_dotenv(ROOT / ".env")
     required = ("PG_HOST", "PG_USER", "PG_PASSWORD", "PG_DBNAME")
@@ -364,7 +672,7 @@ def main(argv: list[str] | None = None) -> int:
         "parameters": portfolio.parameters.describe(),
         "validation": verdict_thresholds.fingerprint,
         "evaluate": evaluate_thresholds.fingerprint,
-        "grid_cells": args.grid_cells,
+        "grid_cells": grid_cells,
         "model_revision": dividend_thresholds.model_revision,
     }
     config_digest = config_sha256(config_payload)
@@ -530,7 +838,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     n_trials_before = trial_count(entries)
-    n_trials = n_trials_before + args.grid_cells
+    n_trials = n_trials_before + grid_cells
     mde = minimum_detectable_effect(
         pool_interval, alpha=evaluate_thresholds.confirm_alpha, power=evaluate_thresholds.power
     )
@@ -606,7 +914,7 @@ def main(argv: list[str] | None = None) -> int:
                 tickers=tickers,
                 universe_source=universe_source,
                 config=config_payload,
-                grid_cells=args.grid_cells,
+                grid_cells=grid_cells,
                 tag=tag,
                 notes=f"config_sha256={config_digest[:12]}",
                 path=journal_path,
@@ -636,7 +944,7 @@ def main(argv: list[str] | None = None) -> int:
         dividend_coverage=coverage,
         ideas_used=state.used,
         ideas_limit=evaluate_thresholds.budget,
-        grid_cells=args.grid_cells,
+        grid_cells=grid_cells,
         n_trials=n_trials,
         target_edge_bps=evaluate_thresholds.target_edge_bps,
         power=evaluate_thresholds.power,

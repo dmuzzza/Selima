@@ -42,6 +42,8 @@ debug/weekend_*.json
 debug/weekend_*.md
 debug/evaluate_*.json
 debug/evaluate_*.md
+debug/power_*.json
+debug/power_*.md
 *.db
 *.db-journal
 *.sqlite3

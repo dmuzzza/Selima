@@ -159,6 +159,9 @@ p_selima_v8.1/
 │   │   ├── evaluate.py                [C] `evaluate`: MDE с мощностью 0.80, пять исходов
 │   │   │                                  (`underpowered`), обрезка запечатанного периода,
 │   │   │                                  Markdown-отчёт (ADR-032)
+│   │   ├── event_study.py             [C] событийная мощность: окна `D−N…D` из дивидендного
+│   │   │                                  календаря, фильтры (история, sealed, declared_date,
+│   │   │                                  not_paid), безусловная σ скользящих доходностей (ADR-033)
 │   │   ├── walk_forward.py            [C] окна train/test, отбор параметров на train, OOS-прогон (ADR-015)
 │   │   ├── null_test.py               [C] контроль движка: случайные входы должны терять издержки (ADR-020)
 │   │   ├── heatmap.py                 [C] сетка TP/SL: плато или одна точка, пороги из validation.json (ADR-021)
@@ -228,9 +231,11 @@ p_selima_v8.1/
 │                                          выплат с одной экс-датой, слой annotations, ADR-025),
 │                                          verdict.py (единый вердикт: сборка входов, Markdown + JSON, ADR-023),
 │                                          evaluate.py (идея → вердикт: MDE с мощностью, поправка из журнала,
-│                                          запечатанный OOS, --dry-run, --record-legacy, ADR-032),
+│                                          запечатанный OOS, --dry-run, --record-legacy, --power-only, ADR-032/033),
 │                                          weekend_audit.py (weekend-бары: группы сделок, микроструктура,
-│                                          расписание брокера, ADR-031)
+│                                          расписание брокера, ADR-031),
+│                                          clean_check.ps1 (ruff/mypy/pytest в чистом worktree: без .env и
+│                                          игнорируемых каталогов — проверка перед пушем)
 ├── optimization/                      [T] grid_tp_sl_dual_ma.py, optimize_macd_plus.py,
 │                                          _check_db.py, tz_ml_optimization.md (ТЗ на ML)
 ├── debug/                             [T] debug_margin.py, debug_instrument.py
@@ -327,6 +332,7 @@ PostgreSQL (`PgLiveTradeRepository` / `PgStopOrderRepository`). SQLite-репо�
 | `Dividends` (`dividends.py`) | `config/dividends.json`, `config/validation.json` (секция `dividends`), свечи | `portfolio.py`, `scripts/portfolio_run.py`, `scripts/verdict.py` |
 | `Verdict` (`verdict.py`) | `IntervalResult`-входы от `portfolio.py`, `heatmap.py`, `null_test.py`, `config/validation.json` (секция `verdict`) | `scripts/verdict.py` |
 | `Evaluate` (`evaluate.py`) | `verdict.py`, `hypothesis_log.py`, `config/validation.json` (секция `evaluate`) | `scripts/evaluate.py` |
+| `EventStudy` (`event_study.py`) | `dividends.py` (`find_ex_bar`), `config/dividends.json`, свечи, `config/validation.json` (секция `evaluate`) | `scripts/evaluate.py --power-only` |
 | `Weekend` (`weekend.py`) | `PooledTrade`/`block_bootstrap` из `portfolio.py`, свечи, `config/validation.json` (секция `weekend` + `min_sample_trades`) | `scripts/weekend_audit.py` |
 | `HypothesisLog` (`hypothesis_log.py`) | `journal/hypotheses.jsonl` | `scripts/evaluate.py` (T2-25), отчёты |
 | `CostModel` (`costs.py`) | `config/commissions.py`, `config/costs.json` | `TradeSimulator`, `scripts/*` |

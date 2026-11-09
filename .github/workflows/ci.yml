@@ -17,6 +17,7 @@ env:
     src/backtest/costs.py
     src/backtest/dividends.py
     src/backtest/evaluate.py
+    src/backtest/event_study.py
     src/backtest/exit_policy.py
     src/backtest/heatmap.py
     src/backtest/hypothesis_log.py

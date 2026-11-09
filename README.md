@@ -173,6 +173,7 @@ p_selima_v8.1/
 | Журнал гипотез: бюджет 20 идей на квартал, `grid_cells` — для screening; хеш-цепочка против перезаписи | `journal/hypotheses.jsonl`, пишет `src/backtest/hypothesis_log.py`; дизайн — `docs/EVALUATE_DESIGN.md` |
 | `evaluate`: идея → вердикт с MDE, поправкой на число попыток из журнала и запечатанным OOS (Markdown + JSON) | `uv run python scripts/evaluate.py --strategy dual_ma_crossover_after_testing --hypothesis "..." --tag my-idea-1` |
 | `evaluate` без записи в журнал и без расхода бюджета (smoke) | добавить `--dry-run`; отчёт помечен `NOT RECORDED` |
+| Предварительная проверка мощности событийной идеи: n событий, безусловная σ и MDE без прогона стратегии (Markdown + JSON) | `uv run python scripts/evaluate.py --power-only --hypothesis "H1 pre-ex run-up" --window-sessions 10 --windows 5,15 --tag h1-power` |
 | Записать нижнюю границу попыток, сделанных до журнала (`kind="legacy"`, бюджет не тратит) | `uv run python scripts/evaluate.py --record-legacy` |
 | Дивиденды: выгрузка календаря из API (ручной запуск, токен из env; слияние выплат с одной экс-датой, слой `annotations` сохраняется, повторный `--write` идемпотентен) | `uv run python scripts/fetch_dividends.py --tickers SBER SNGSP --write` |
 | Weekend-бары: три группы сделок с блочным CI, микроструктура против будней, расписание брокера (Markdown + JSON) | `uv run python scripts/weekend_audit.py --tag t2-23`; без сети — `--no-schedule` |
@@ -217,13 +218,30 @@ entry_time)`, — окно от самого раннего входа до са
 | Тесты | `pytest -q` | все |
 
 `CLEAN_SET` — список файлов/каталогов без legacy-долга (T1-7): сейчас
-`src/backtest/costs.py`, `src/backtest/exit_policy.py`, `src/backtest/heatmap.py`,
-`src/backtest/null_test.py`, `src/backtest/portfolio.py`, `src/backtest/simulator.py`,
-`src/backtest/verdict.py`, `src/backtest/walk_forward.py`, `src/backtest/weekend.py`,
+`src/backtest/costs.py`, `src/backtest/dividends.py`, `src/backtest/evaluate.py`,
+`src/backtest/event_study.py`, `src/backtest/exit_policy.py`, `src/backtest/heatmap.py`,
+`src/backtest/hypothesis_log.py`, `src/backtest/null_test.py`, `src/backtest/portfolio.py`,
+`src/backtest/simulator.py`, `src/backtest/verdict.py`, `src/backtest/walk_forward.py`,
+`src/backtest/weekend.py`, `config/commissions.py`, `src/market_data/preparation.py`,
 `src/strategies/_null_entry`,
 `src/strategies/_template`, `src/strategies/strategy_registry.py`,
 `src/trading/pending_recovery.py`, `tests`.
 При исправлении legacy-файла путь **добавляется** в набор; удалять пути нельзя.
+
+Перед пушем — локальный прогон тех же трёх шагов в **чистом worktree** (только
+отслеживаемые файлы: без `.env`, `.venv`, `logs/`, `debug/`):
+
+```powershell
+powershell -File scripts/clean_check.ps1
+```
+
+Запускать **после коммита и до пуша**: скрипт проверяет `HEAD`, то есть ровно то
+дерево, которое возьмёт CI. Незакоммиченные файлы в worktree не попадают — до
+коммита скрипт сообщит об их отсутствии, это ожидаемо.
+
+Скрипт ловит дефекты класса «работает у меня, потому что папка уже есть»:
+CI-прогон 18 упал именно так — `scheduler.py` открывал `logs/scheduler.log` до
+создания каталога (исправлено в `3ae08e1`).
 
 Правила веток: `main` — только через PR (обход правил запрещён и для администратора),
 `dev` — прямые push разрешены, force-push и удаление запрещены.

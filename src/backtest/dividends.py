@@ -71,6 +71,11 @@ class DividendEvent:
 
     `status` is `active` for a paid event and `not_paid` for a declared payout
     that shareholders rejected: the API returns it, the market never paid it.
+
+    `declared_date` is when the payout was announced. It exists to reject
+    look-ahead: an idea that enters before the announcement traded on information
+    it did not have. The field is optional because calendar v3 was fetched before
+    it was stored; a missing value is reported, not silently treated as known.
     """
 
     ticker: str
@@ -82,12 +87,14 @@ class DividendEvent:
     status: str = "active"
     payouts: tuple[float, ...] = ()
     note: str | None = None
+    declared_date: date | None = None
 
     def describe(self) -> dict:
         return {
             "ticker": self.ticker,
             "last_buy_date": self.last_buy_date.isoformat(),
             "record_date": self.record_date.isoformat() if self.record_date else None,
+            "declared_date": self.declared_date.isoformat() if self.declared_date else None,
             "dividend_gross": self.dividend_gross,
             "source": self.source,
             "reference": self.reference,
@@ -173,6 +180,14 @@ def _parse_event(
         except ValueError as exc:
             raise ValueError(f"{where}: bad 'record_date' {record_raw!r}") from exc
 
+    declared_raw = raw.get("declared_date")
+    declared_date: date | None = None
+    if declared_raw:
+        try:
+            declared_date = date.fromisoformat(str(declared_raw))
+        except ValueError as exc:
+            raise ValueError(f"{where}: bad 'declared_date' {declared_raw!r}") from exc
+
     status = str(raw.get("status") or "active").strip().lower()
     if status not in VALID_STATUSES:
         raise ValueError(f"{where}: 'status' must be one of {sorted(VALID_STATUSES)}")
@@ -206,6 +221,7 @@ def _parse_event(
         status=status,
         payouts=payouts,
         note=str(note) if note else None,
+        declared_date=declared_date,
     )
 
 
